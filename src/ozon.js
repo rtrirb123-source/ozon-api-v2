@@ -75,6 +75,11 @@ function dimensionValue(row, names) {
   return "";
 }
 
+function dimensionAt(row, index) {
+  const dimension = (row.dimensions || [])[index];
+  return dimension ? dimension.id || dimension.name || "" : "";
+}
+
 function metricValue(row, index) {
   const value = (row.metrics || [])[index];
   if (value === "" || value === null || value === undefined) return null;
@@ -172,8 +177,8 @@ async function syncOzonMetrics({ days = 30 } = {}) {
   const grouped = new Map();
 
   for (const row of analyticsRows) {
-    const sku = String(dimensionValue(row, ["sku", "SKU"]));
-    const day = dimensionValue(row, ["day", "День"]);
+    const sku = String(dimensionAt(row, 0) || dimensionValue(row, ["sku", "SKU"]));
+    const day = dimensionAt(row, 1) || dimensionValue(row, ["day", "День"]);
     const offerId = lookup.get(sku);
     if (!offerId || !day) continue;
 
