@@ -109,6 +109,14 @@ async function route(req, res) {
     return;
   }
 
+  if (req.method === "POST" && path === "/api/sync/ozon/products") {
+    sendJson(req, res, 200, {
+      ok: true,
+      data: await ozon.syncOzonProducts()
+    });
+    return;
+  }
+
   if (req.method === "GET" && path === "/api/sync/ozon/preview") {
     sendJson(req, res, 200, {
       ok: true,
