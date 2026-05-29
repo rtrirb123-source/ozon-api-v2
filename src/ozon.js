@@ -167,4 +167,22 @@ async function syncOzonMetrics({ days = 30 } = {}) {
   };
 }
 
-module.exports = { syncOzonMetrics };
+async function previewOzonAnalytics({ days = 3, limit = 10 } = {}) {
+  const safeDays = Math.min(Math.max(Number(days) || 3, 1), 30);
+  const to = new Date();
+  const from = new Date();
+  from.setDate(to.getDate() - safeDays + 1);
+  const response = await requestJson("/v1/analytics/data", {
+    date_from: formatDate(from),
+    date_to: formatDate(to),
+    metrics: ["ordered_units", "revenue"],
+    dimension: ["sku", "day"],
+    filters: [],
+    sort: [{ key: "ordered_units", order: "DESC" }],
+    limit: Math.min(Number(limit) || 10, 50),
+    offset: 0
+  });
+  return response.result?.data || [];
+}
+
+module.exports = { previewOzonAnalytics, syncOzonMetrics };
