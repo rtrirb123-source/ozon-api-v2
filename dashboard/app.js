@@ -9,6 +9,7 @@ const state = {
   selectedOfferId: "",
   metrics: [],
   search: "",
+  salesSort: "desc",
   timers: new Map(),
   versions: new Map(),
   statuses: new Map(),
@@ -210,6 +211,16 @@ function productMatches(product) {
     .some((value) => String(value || "").toLowerCase().includes(term));
 }
 
+function sortedProducts() {
+  const list = state.products.filter(productMatches);
+  if (state.salesSort === "none") return list;
+  return [...list].sort((a, b) => {
+    const left = toNumber(a.yesterday_sales);
+    const right = toNumber(b.yesterday_sales);
+    return state.salesSort === "asc" ? left - right : right - left;
+  });
+}
+
 function renderInput(product, field, type = "text") {
   const value = formatValue(product[field]);
   const key = statusKey(product.offer_id, field);
@@ -266,7 +277,7 @@ function renderCell(product, column) {
 function renderTable() {
   const activeColumns = visibleColumns();
   $("tableHead").innerHTML = `<tr>${activeColumns.map((column) => `<th>${column.label}</th>`).join("")}</tr>`;
-  const rows = state.products.filter(productMatches).map((product) => `
+  const rows = sortedProducts().map((product) => `
     <tr class="${product.offer_id === state.selectedOfferId ? "selected-row" : ""}" data-row-offer="${escapeHtml(product.offer_id)}">
       ${activeColumns.map((column) => renderCell(product, column)).join("")}
     </tr>
@@ -297,8 +308,8 @@ function renderTrend() {
   }
 
   const width = 760;
-  const height = 220;
-  const padding = 28;
+  const height = 250;
+  const padding = { left: 42, right: 36, top: 16, bottom: 34 };
   const points = state.metrics.map((item, index) => ({
     index,
     sales: Number(item.sales_units || 0),
@@ -306,22 +317,42 @@ function renderTrend() {
   }));
   const maxSales = Math.max(1, ...points.map((point) => point.sales));
   const maxAd = Math.max(1, ...points.map((point) => point.ad));
-  const x = (index) => padding + (points.length === 1 ? 0 : (index * (width - padding * 2)) / (points.length - 1));
-  const ySales = (value) => height - padding - (value / maxSales) * (height - padding * 2);
-  const yAd = (value) => height - padding - (value / maxAd) * (height - padding * 2);
+  const x = (index) => padding.left + (points.length === 1 ? 0 : (index * (width - padding.left - padding.right)) / (points.length - 1));
+  const ySales = (value) => height - padding.bottom - (value / maxSales) * (height - padding.top - padding.bottom);
+  const yAd = (value) => height - padding.bottom - (value / maxAd) * (height - padding.top - padding.bottom);
+  const salesTicks = [0, Math.ceil(maxSales / 2), Math.ceil(maxSales)];
+  const adTicks = [0, Math.ceil(maxAd / 2), Math.ceil(maxAd)];
+  const dateTicks = points
+    .map((point, index) => ({ point, index }))
+    .filter(({ index }) => index === 0 || index === points.length - 1 || index === Math.floor((points.length - 1) / 2));
+  const yGrid = salesTicks.map((tick) => `
+    <line class="grid-line" x1="${padding.left}" y1="${ySales(tick)}" x2="${width - padding.right}" y2="${ySales(tick)}"></line>
+    <text class="axis-label" x="${padding.left - 8}" y="${ySales(tick) + 4}" text-anchor="end">${tick}</text>
+  `).join("");
+  const adLabels = adTicks.map((tick) => `
+    <text class="axis-label ad-axis-label" x="${width - padding.right + 8}" y="${yAd(tick) + 4}">${tick}%</text>
+  `).join("");
+  const xLabels = dateTicks.map(({ point, index }) => {
+    const label = String(point.date || "").slice(5, 10);
+    return `<text class="axis-label" x="${x(index)}" y="${height - 10}" text-anchor="middle">${label}</text>`;
+  }).join("");
   const salesPath = points.map((point, index) => `${index ? "L" : "M"} ${x(index).toFixed(2)} ${ySales(point.sales).toFixed(2)}`).join(" ");
   const adPath = points.map((point, index) => `${index ? "L" : "M"} ${x(index).toFixed(2)} ${yAd(point.ad).toFixed(2)}`).join(" ");
   const bars = points.map((point, index) => {
-    const barHeight = height - padding - ySales(point.sales);
+    const barHeight = height - padding.bottom - ySales(point.sales);
     return `<rect x="${x(index) - 4}" y="${ySales(point.sales)}" width="8" height="${barHeight}" rx="2"></rect>`;
   }).join("");
 
   chart.innerHTML = `
     <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="近 30 天销量和广告比例">
-      <line class="axis" x1="${padding}" y1="${height - padding}" x2="${width - padding}" y2="${height - padding}"></line>
+      ${yGrid}
+      ${adLabels}
+      <line class="axis" x1="${padding.left}" y1="${height - padding.bottom}" x2="${width - padding.right}" y2="${height - padding.bottom}"></line>
+      <line class="axis" x1="${padding.left}" y1="${padding.top}" x2="${padding.left}" y2="${height - padding.bottom}"></line>
       <g class="sales-bars">${bars}</g>
       <path class="sales-line" d="${salesPath}"></path>
       <path class="ad-line" d="${adPath}"></path>
+      ${xLabels}
     </svg>
     <div class="trend-summary">
       <span>30 天销量：${points.reduce((sum, point) => sum + point.sales, 0)}</span>
@@ -423,6 +454,10 @@ document.addEventListener("click", (event) => {
 $("refreshBtn").addEventListener("click", () => loadDashboard().catch((error) => showToast(error.message)));
 $("searchInput").addEventListener("input", (event) => {
   state.search = event.target.value;
+  renderTable();
+});
+$("salesSort").addEventListener("change", (event) => {
+  state.salesSort = event.target.value;
   renderTable();
 });
 $("addBtn").addEventListener("click", () => $("addDialog").showModal());
