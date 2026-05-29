@@ -3,6 +3,7 @@ const { config } = require("./config");
 const products = require("./products");
 
 const OZON_API_HOST = "api-seller.ozon.ru";
+const OZON_PERFORMANCE_HOST = "api-performance.ozon.ru";
 
 function formatDate(date) {
   return date.toISOString().slice(0, 10);
@@ -64,6 +65,223 @@ function requestJson(path, body) {
     req.write(payload);
     req.end();
   });
+}
+
+function performanceRequestJson(path, { method = "GET", body, token } = {}) {
+  return new Promise((resolve, reject) => {
+    const payload = body === undefined ? "" : JSON.stringify(body);
+    const headers = {
+      Accept: "application/json"
+    };
+    if (token) headers.Authorization = `Bearer ${token}`;
+    if (payload) {
+      headers["Content-Type"] = "application/json";
+      headers["Content-Length"] = Buffer.byteLength(payload);
+    }
+
+    const req = https.request(
+      {
+        method,
+        hostname: OZON_PERFORMANCE_HOST,
+        path,
+        headers,
+        timeout: 45000
+      },
+      (res) => {
+        let data = "";
+        res.setEncoding("utf8");
+        res.on("data", (chunk) => {
+          data += chunk;
+        });
+        res.on("end", () => {
+          let parsed = {};
+          try {
+            parsed = data ? JSON.parse(data) : {};
+          } catch (error) {
+            error.statusCode = 502;
+            error.details = data.slice(0, 500);
+            reject(error);
+            return;
+          }
+          if (res.statusCode < 200 || res.statusCode >= 300) {
+            const error = new Error(parsed.error || parsed.message || `Ozon Performance API HTTP ${res.statusCode}`);
+            error.statusCode = res.statusCode === 429 ? 429 : 502;
+            error.details = parsed;
+            reject(error);
+            return;
+          }
+          resolve(parsed);
+        });
+      }
+    );
+
+    req.on("timeout", () => req.destroy(new Error("Ozon Performance API request timeout")));
+    req.on("error", reject);
+    if (payload) req.write(payload);
+    req.end();
+  });
+}
+
+async function getPerformanceToken() {
+  if (!config.ozonPerformanceClientId || !config.ozonPerformanceClientSecret) {
+    const error = new Error("OZON_PERFORMANCE_CLIENT_ID and OZON_PERFORMANCE_CLIENT_SECRET are required");
+    error.statusCode = 500;
+    throw error;
+  }
+
+  const response = await performanceRequestJson("/api/client/token", {
+    method: "POST",
+    body: {
+      client_id: config.ozonPerformanceClientId,
+      client_secret: config.ozonPerformanceClientSecret,
+      grant_type: "client_credentials"
+    }
+  });
+  if (!response.access_token) {
+    const error = new Error("Ozon Performance token response did not include access_token");
+    error.statusCode = 502;
+    throw error;
+  }
+  return response.access_token;
+}
+
+async function fetchPerformanceCampaigns(token) {
+  const states = ["CAMPAIGN_STATE_RUNNING", "CAMPAIGN_STATE_INACTIVE"];
+  const campaigns = [];
+  for (const state of states) {
+    const response = await performanceRequestJson(`/api/client/campaign?state=${encodeURIComponent(state)}`, { token });
+    campaigns.push(...(response.list || []));
+  }
+  return campaigns;
+}
+
+async function fetchCampaignProducts(token, campaignId) {
+  try {
+    const response = await performanceRequestJson(`/api/client/campaign/${encodeURIComponent(campaignId)}/v2/products`, { token });
+    return (response.products || []).map((product) => String(product.sku || "")).filter(Boolean);
+  } catch (error) {
+    if (error.statusCode === 400 || error.statusCode === 404) return [];
+    throw error;
+  }
+}
+
+async function requestPerformanceReport(token, campaigns, from, to) {
+  const response = await performanceRequestJson("/api/client/statistics/json", {
+    method: "POST",
+    token,
+    body: {
+      campaigns,
+      dateFrom: formatDate(from),
+      dateTo: formatDate(to),
+      groupBy: "DATE"
+    }
+  });
+  return response.UUID || response.uuid;
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitForPerformanceReport(token, uuid) {
+  for (let attempt = 0; attempt < 18; attempt += 1) {
+    const status = await performanceRequestJson(`/api/client/statistics/${encodeURIComponent(uuid)}`, { token });
+    const state = String(status.state || "").toUpperCase();
+    if (["OK", "DONE", "SUCCESS", "COMPLETED", "READY"].includes(state)) {
+      return performanceRequestJson(`/api/client/statistics/report?UUID=${encodeURIComponent(uuid)}`, { token });
+    }
+    if (["ERROR", "FAILED", "CANCELED", "CANCELLED"].includes(state)) {
+      const error = new Error(`Ozon Performance report ${state}`);
+      error.statusCode = 502;
+      error.details = status;
+      throw error;
+    }
+    await sleep(5000);
+  }
+
+  const error = new Error("Ozon Performance report was not ready in time");
+  error.statusCode = 202;
+  throw error;
+}
+
+function normalizeReportRows(report) {
+  if (Array.isArray(report)) return report;
+  if (Array.isArray(report.rows)) return report.rows;
+  if (Array.isArray(report.data)) return report.data;
+  if (Array.isArray(report.result?.rows)) return report.result.rows;
+  if (Array.isArray(report.result?.data)) return report.result.data;
+  if (Array.isArray(report.report?.rows)) return report.report.rows;
+  return [];
+}
+
+function pick(row, names) {
+  for (const name of names) {
+    if (row && row[name] !== undefined && row[name] !== null && row[name] !== "") return row[name];
+  }
+  return null;
+}
+
+function rowDate(row) {
+  const value = pick(row, ["date", "day", "metric_date", "dateFrom", "from"]);
+  return value ? String(value).slice(0, 10) : "";
+}
+
+function rowSpend(row) {
+  return Number(pick(row, ["expense", "expenses", "spend", "cost", "moneySpent", "ad_spend"]) || 0);
+}
+
+async function fetchPerformanceAdSpend({ days = 30, lookup }) {
+  if (!config.ozonPerformanceClientId || !config.ozonPerformanceClientSecret) {
+    return { rows: [], warning: "Ozon Performance credentials are not configured" };
+  }
+
+  const safeDays = Math.min(Math.max(Number(days) || 30, 1), 90);
+  const to = new Date();
+  const from = new Date();
+  from.setDate(to.getDate() - safeDays + 1);
+
+  const token = await getPerformanceToken();
+  const campaigns = await fetchPerformanceCampaigns(token);
+  const skuCampaigns = campaigns.filter((campaign) => ["SKU", "ALL_SKU_PROMO"].includes(campaign.advObjectType));
+  const campaignIds = skuCampaigns.map((campaign) => String(campaign.id)).filter(Boolean);
+  if (!campaignIds.length) return { rows: [], warning: "No SKU performance campaigns found" };
+
+  const campaignSkuMap = new Map();
+  for (const campaignId of campaignIds) {
+    campaignSkuMap.set(campaignId, await fetchCampaignProducts(token, campaignId));
+  }
+
+  const uuid = await requestPerformanceReport(token, campaignIds, from, to);
+  if (!uuid) return { rows: [], warning: "Ozon Performance did not return a report UUID" };
+
+  const report = await waitForPerformanceReport(token, uuid);
+  const rows = [];
+  for (const row of normalizeReportRows(report)) {
+    const date = rowDate(row);
+    const spend = rowSpend(row);
+    if (!date || !Number.isFinite(spend) || spend <= 0) continue;
+
+    const sku = String(pick(row, ["sku", "SKU", "objectId", "object_id", "productId", "product_id"]) || "");
+    const campaignId = String(pick(row, ["campaignId", "campaign_id", "id"]) || "");
+    if (sku && lookup.has(sku)) {
+      rows.push({ offer_id: lookup.get(sku), metric_date: date, ad_spend: spend });
+      continue;
+    }
+
+    const campaignSkus = campaignSkuMap.get(campaignId) || [];
+    const offerIds = Array.from(new Set(campaignSkus.map((item) => lookup.get(item)).filter(Boolean)));
+    if (!offerIds.length) continue;
+    const allocatedSpend = spend / offerIds.length;
+    for (const offerId of offerIds) {
+      rows.push({ offer_id: offerId, metric_date: date, ad_spend: allocatedSpend });
+    }
+  }
+
+  return {
+    rows,
+    reportRows: normalizeReportRows(report).length,
+    campaigns: campaignIds.length
+  };
 }
 
 function dimensionValue(row, names) {
@@ -175,6 +393,7 @@ async function syncOzonMetrics({ days = 30 } = {}) {
   const lookup = buildProductLookup(productRows);
   const analyticsRows = await fetchSalesAnalytics(days);
   const grouped = new Map();
+  let adSync = { rows: [] };
 
   for (const row of analyticsRows) {
     const sku = String(dimensionAt(row, 0) || dimensionValue(row, ["sku", "SKU"]));
@@ -194,6 +413,28 @@ async function syncOzonMetrics({ days = 30 } = {}) {
     grouped.set(key, existing);
   }
 
+  try {
+    adSync = await fetchPerformanceAdSpend({ days, lookup });
+    for (const row of adSync.rows) {
+      const key = `${row.offer_id}:${row.metric_date}`;
+      const existing = grouped.get(key) || {
+        metric_date: row.metric_date,
+        sales_units: 0,
+        revenue: 0,
+        ad_ratio: null
+      };
+      existing.ad_spend = (Number(existing.ad_spend) || 0) + (Number(row.ad_spend) || 0);
+      existing.ad_ratio = existing.revenue > 0 ? Number(((existing.ad_spend / existing.revenue) * 100).toFixed(2)) : null;
+      grouped.set(key, existing);
+    }
+  } catch (error) {
+    adSync = {
+      rows: [],
+      warning: error.message,
+      statusCode: error.statusCode || 500
+    };
+  }
+
   const byOffer = new Map();
   for (const [key, metric] of grouped.entries()) {
     const offerId = key.split(":")[0];
@@ -210,6 +451,8 @@ async function syncOzonMetrics({ days = 30 } = {}) {
   return {
     productsMatched: byOffer.size,
     rowsFromOzon: analyticsRows.length,
+    adRowsFromOzon: adSync.rows.length,
+    adWarning: adSync.warning || null,
     metricsSaved: savedCount
   };
 }
