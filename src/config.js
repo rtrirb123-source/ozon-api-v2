@@ -25,6 +25,8 @@ const config = {
   port: Number(process.env.PORT || 3000),
   databaseUrl: process.env.DATABASE_URL || "",
   autoMigrate: (process.env.AUTO_MIGRATE || "true").toLowerCase() !== "false",
+  ozonClientId: process.env.OZON_CLIENT_ID || "",
+  ozonApiKey: process.env.OZON_API_KEY || "",
   allowedOrigins: (process.env.ALLOWED_ORIGINS || "*")
     .split(",")
     .map((item) => item.trim())
