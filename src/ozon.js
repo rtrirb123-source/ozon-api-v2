@@ -211,6 +211,16 @@ function normalizeReportRows(report) {
   if (Array.isArray(report.result?.rows)) return report.result.rows;
   if (Array.isArray(report.result?.data)) return report.result.data;
   if (Array.isArray(report.report?.rows)) return report.report.rows;
+  if (report && typeof report === "object") {
+    const rows = [];
+    for (const [campaignId, value] of Object.entries(report)) {
+      const nestedRows = normalizeReportRows(value);
+      for (const row of nestedRows) {
+        rows.push({ campaignId, ...row });
+      }
+    }
+    return rows;
+  }
   return [];
 }
 
@@ -227,7 +237,11 @@ function rowDate(row) {
 }
 
 function rowSpend(row) {
-  return Number(pick(row, ["expense", "expenses", "spend", "cost", "moneySpent", "ad_spend"]) || 0);
+  const value = pick(row, ["expense", "expenses", "spend", "cost", "moneySpent", "ad_spend"]);
+  if (value === null) return 0;
+  const normalized = String(value).replace(/\s/g, "").replace(",", ".");
+  const number = Number(normalized);
+  return Number.isFinite(number) ? number : 0;
 }
 
 async function fetchPerformanceAdSpend({ days = 30, lookup }) {
