@@ -365,8 +365,8 @@ async function upsertMetrics(offerId, metrics) {
        VALUES ($1, $2, $3, $4, $5, $6)
        ON CONFLICT (offer_id, metric_date) DO UPDATE SET
          sales_units = EXCLUDED.sales_units,
-         ad_ratio = EXCLUDED.ad_ratio,
-         ad_spend = EXCLUDED.ad_spend,
+         ad_ratio = COALESCE(EXCLUDED.ad_ratio, product_daily_metrics.ad_ratio),
+         ad_spend = COALESCE(EXCLUDED.ad_spend, product_daily_metrics.ad_spend),
          revenue = EXCLUDED.revenue
        RETURNING metric_date, sales_units, ad_ratio, ad_spend, revenue, updated_at`,
       [
