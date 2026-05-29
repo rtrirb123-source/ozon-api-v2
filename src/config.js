@@ -27,6 +27,8 @@ const config = {
   autoMigrate: (process.env.AUTO_MIGRATE || "true").toLowerCase() !== "false",
   ozonClientId: process.env.OZON_CLIENT_ID || "",
   ozonApiKey: process.env.OZON_API_KEY || "",
+  ozonPerformanceClientId: process.env.OZON_PERFORMANCE_CLIENT_ID || "",
+  ozonPerformanceClientSecret: process.env.OZON_PERFORMANCE_CLIENT_SECRET || "",
   allowedOrigins: (process.env.ALLOWED_ORIGINS || "*")
     .split(",")
     .map((item) => item.trim())
