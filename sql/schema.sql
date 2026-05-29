@@ -2,6 +2,7 @@ CREATE TABLE IF NOT EXISTS products (
   id BIGSERIAL PRIMARY KEY,
   offer_id TEXT NOT NULL UNIQUE,
   product_id TEXT,
+  ozon_sku TEXT,
   title TEXT,
   image_url TEXT,
   strategy TEXT,
@@ -19,6 +20,7 @@ CREATE TABLE IF NOT EXISTS products (
 
 CREATE INDEX IF NOT EXISTS products_updated_at_idx ON products (updated_at DESC);
 CREATE INDEX IF NOT EXISTS products_product_id_idx ON products (product_id);
+CREATE INDEX IF NOT EXISTS products_ozon_sku_idx ON products (ozon_sku);
 
 CREATE TABLE IF NOT EXISTS product_daily_metrics (
   id BIGSERIAL PRIMARY KEY,
