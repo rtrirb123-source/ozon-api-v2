@@ -240,14 +240,29 @@ function renderInput(product, field, type = "text") {
 }
 
 function expectedProfit(product) {
-  const price = toNumber(product.price);
-  if (!price) return "";
-  const purchase = toNumber(product.purchase_cost);
-  const commission = price * toNumber(product.commission_rate) / 100;
-  const ad = price * toNumber(product.ad_ratio) / 100;
-  const returns = price * toNumber(product.return_rate) / 100;
-  const freight = (toNumber(product.weight) / 1000) * toNumber(product.freight_rate);
-  return (price - purchase - commission - ad - returns - freight).toFixed(2);
+  const priceRub = toNumber(product.price);
+  if (!priceRub) return "";
+
+  const rubToCny = 9.07 / 100;
+  const kgToCny = 7.2;
+  const purchaseCny = toNumber(product.purchase_cost);
+  const weightKg = toNumber(product.weight) / 1000;
+  const freightRate = toNumber(product.freight_rate);
+
+  const commissionRub = priceRub * toNumber(product.commission_rate) / 100;
+  const adRub = priceRub * toNumber(product.ad_ratio) / 100;
+  const returnRub = priceRub * toNumber(product.return_rate) / 100;
+  const tailDeliveryRub = priceRub * 0.10;
+  const taxRub = priceRub * 0.12;
+  const acquiringRub = priceRub * 0.03;
+  const remainingRub = priceRub - commissionRub - adRub - returnRub - tailDeliveryRub - taxRub - acquiringRub;
+  const remittanceLossRub = remainingRub * 0.06;
+
+  const incomeCny = priceRub * rubToCny;
+  const platformCostCny = (commissionRub + adRub + returnRub + tailDeliveryRub + taxRub + acquiringRub + remittanceLossRub) * rubToCny;
+  const firstMileCny = weightKg * freightRate * kgToCny;
+  const profitCny = incomeCny - platformCostCny - firstMileCny - purchaseCny;
+  return profitCny.toFixed(2);
 }
 
 function renderImage(product) {
