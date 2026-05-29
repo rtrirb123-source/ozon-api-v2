@@ -374,6 +374,29 @@ async function fetchAllProductList() {
   return items;
 }
 
+async function fetchCategoryLookup() {
+  const response = await requestJson("/v1/description-category/tree", {
+    language: "DEFAULT"
+  });
+  const lookup = new Map();
+
+  function walk(nodes, categoryName = "") {
+    for (const node of nodes || []) {
+      const nextCategoryName = node.category_name || categoryName;
+      if (node.type_id) {
+        lookup.set(String(node.type_id), {
+          category_name: categoryName,
+          type_name: node.type_name || ""
+        });
+      }
+      walk(node.children, nextCategoryName);
+    }
+  }
+
+  walk(response.result || []);
+  return lookup;
+}
+
 async function fetchAllStocks() {
   const items = [];
   let cursor = "";
@@ -433,6 +456,7 @@ async function syncOzonProducts() {
   const items = await fetchProductInfo(offerIds);
   const stockItems = await fetchAllStocks();
   const { date: yesterdayDate, sales: yesterdaySales } = await fetchYesterdaySales();
+  const categoryLookup = await fetchCategoryLookup();
   const infoByOffer = new Map(items.map((item) => [String(item.offer_id || ""), item]));
   const stockByOffer = new Map(stockItems.map((item) => [String(item.offer_id || ""), summarizeStock(item)]));
   let updated = 0;
@@ -442,12 +466,17 @@ async function syncOzonProducts() {
     const stock = stockByOffer.get(String(listItem.offer_id || "")) || {};
     const sku = item.sku || item.sources?.[0]?.sku || item.stocks?.stocks?.[0]?.sku;
     const ozonSku = sku || stock.ozon_sku || "";
+    const category = categoryLookup.get(String(item.type_id || "")) || {};
     if (!listItem.offer_id) continue;
     const primaryImage = Array.isArray(item.primary_image) ? item.primary_image[0] : "";
     await products.createProduct({
       offer_id: String(listItem.offer_id),
       product_id: String(item.id || ""),
       ozon_sku: String(ozonSku),
+      description_category_id: item.description_category_id ? String(item.description_category_id) : "",
+      type_id: item.type_id ? String(item.type_id) : "",
+      category_name: category.category_name || "",
+      type_name: category.type_name || "",
       title: item.name || "",
       image_url: primaryImage || item.images?.[0] || "",
       fbo_stock: stock.fbo_stock || 0,
