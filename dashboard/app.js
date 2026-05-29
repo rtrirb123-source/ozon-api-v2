@@ -1,5 +1,6 @@
 const API_BASE = "https://ozon-api-v2-production.up.railway.app";
 const dashboardUrl = `${API_BASE}/api/dashboard`;
+const columnsKey = "ozon-dashboard-visible-columns";
 
 const state = {
   products: [],
@@ -9,34 +10,44 @@ const state = {
   search: "",
   timers: new Map(),
   versions: new Map(),
-  statuses: new Map()
+  statuses: new Map(),
+  visibleColumns: new Set()
 };
 
-const fields = [
+const editableFields = [
   "commission_rate",
   "purchase_cost",
   "weight",
   "freight_rate",
   "return_rate",
-  "ad_ratio",
   "price",
-  "strategy",
+  "ad_ratio",
   "competitor_compare",
+  "strategy",
   "image_url"
 ];
 
-const fieldLabels = {
-  commission_rate: "佣金率",
-  purchase_cost: "采购成本",
-  weight: "重量",
-  freight_rate: "运费系数",
-  return_rate: "退货率",
-  ad_ratio: "广告比例",
-  price: "售价",
-  strategy: "产品策略",
-  competitor_compare: "竞品对比",
-  image_url: "商品图片"
-};
+const columns = [
+  { key: "product", label: "商品", fixed: true },
+  { key: "ozon_sku", label: "Ozon SKU" },
+  { key: "image_url", label: "图片" },
+  { key: "fbo_stock", label: "FBO库存数" },
+  { key: "fbs_stock", label: "FBS库存数" },
+  { key: "yesterday_sales", label: "昨日销量" },
+  { key: "commission_rate", label: "佣金率", type: "number" },
+  { key: "purchase_cost", label: "采购成本", type: "number" },
+  { key: "weight", label: "重量", type: "number" },
+  { key: "freight_rate", label: "运费系数", type: "number" },
+  { key: "return_rate", label: "退货率", type: "number" },
+  { key: "price", label: "售价", type: "number" },
+  { key: "ad_ratio", label: "广告比例", type: "number" },
+  { key: "expected_profit", label: "预期利润" },
+  { key: "competitor_compare", label: "竞品对比" },
+  { key: "strategy", label: "产品策略" },
+  { key: "status", label: "状态" }
+];
+
+const fieldLabels = Object.fromEntries(columns.map((column) => [column.key, column.label]));
 
 function $(id) {
   return document.getElementById(id);
@@ -48,6 +59,11 @@ function escapeHtml(value) {
     .replaceAll('"', "&quot;")
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;");
+}
+
+function toNumber(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : 0;
 }
 
 function statusKey(offerId, field) {
@@ -93,12 +109,30 @@ function setStatus(offerId, field, status, text) {
   }
 }
 
+function loadVisibleColumns() {
+  const fallback = columns.map((column) => column.key);
+  try {
+    const saved = JSON.parse(localStorage.getItem(columnsKey) || "null");
+    const valid = Array.isArray(saved) ? saved.filter((key) => columns.some((column) => column.key === key)) : fallback;
+    state.visibleColumns = new Set(valid.length ? valid : fallback);
+  } catch {
+    state.visibleColumns = new Set(fallback);
+  }
+  for (const column of columns.filter((item) => item.fixed)) state.visibleColumns.add(column.key);
+}
+
+function saveVisibleColumns() {
+  localStorage.setItem(columnsKey, JSON.stringify(Array.from(state.visibleColumns)));
+}
+
+function visibleColumns() {
+  return columns.filter((column) => state.visibleColumns.has(column.key));
+}
+
 async function loadDashboard() {
   setSyncText("正在加载数据...");
   const response = await fetch(dashboardUrl);
-  if (!response.ok) {
-    throw new Error(`加载失败：${response.status}`);
-  }
+  if (!response.ok) throw new Error(`加载失败：${response.status}`);
   const payload = await response.json();
   state.products = payload.data.products || [];
   state.summary = payload.data.summary || {};
@@ -124,6 +158,18 @@ async function loadMetrics(offerId) {
   renderTrend();
 }
 
+function renderColumnControls() {
+  $("columnControls").innerHTML = columns
+    .filter((column) => !column.fixed)
+    .map((column) => `
+      <label>
+        <input type="checkbox" data-column-toggle="${column.key}" ${state.visibleColumns.has(column.key) ? "checked" : ""} />
+        ${column.label}
+      </label>
+    `)
+    .join("");
+}
+
 function renderStats() {
   const summary = state.summary;
   const items = [
@@ -142,13 +188,8 @@ function renderStats() {
 function productMatches(product) {
   const term = state.search.trim().toLowerCase();
   if (!term) return true;
-  return [
-    product.offer_id,
-    product.product_id,
-    product.title,
-    product.strategy,
-    product.competitor_compare
-  ].some((value) => String(value || "").toLowerCase().includes(term));
+  return [product.offer_id, product.product_id, product.title, product.strategy, product.competitor_compare]
+    .some((value) => String(value || "").toLowerCase().includes(term));
 }
 
 function renderInput(product, field, type = "text") {
@@ -169,6 +210,17 @@ function renderInput(product, field, type = "text") {
   `;
 }
 
+function expectedProfit(product) {
+  const price = toNumber(product.price);
+  if (!price) return "";
+  const purchase = toNumber(product.purchase_cost);
+  const commission = price * toNumber(product.commission_rate) / 100;
+  const ad = price * toNumber(product.ad_ratio) / 100;
+  const returns = price * toNumber(product.return_rate) / 100;
+  const freight = (toNumber(product.weight) / 1000) * toNumber(product.freight_rate);
+  return (price - purchase - commission - ad - returns - freight).toFixed(2);
+}
+
 function renderImage(product) {
   const image = product.image_url;
   return `
@@ -177,32 +229,35 @@ function renderImage(product) {
   `;
 }
 
-function renderTable() {
-  const rows = state.products.filter(productMatches).map((product) => `
-    <tr class="${product.offer_id === state.selectedOfferId ? "selected-row" : ""}" data-row-offer="${escapeHtml(product.offer_id)}">
+function renderCell(product, column) {
+  if (column.key === "product") {
+    return `
       <td class="product-cell">
         <strong>${escapeHtml(product.offer_id)}</strong>
         <span>${escapeHtml(product.product_id)}</span>
       </td>
-      <td>${escapeHtml(product.ozon_sku)}</td>
-      <td class="image-cell">${renderImage(product)}</td>
-      <td>${renderInput(product, "commission_rate", "number")}</td>
-      <td>${renderInput(product, "purchase_cost", "number")}</td>
-      <td>${renderInput(product, "weight", "number")}</td>
-      <td>${renderInput(product, "freight_rate", "number")}</td>
-      <td>${renderInput(product, "return_rate", "number")}</td>
-      <td>${renderInput(product, "ad_ratio", "number")}</td>
-      <td>${renderInput(product, "price", "number")}</td>
-      <td>${renderInput(product, "strategy")}</td>
-      <td>${renderInput(product, "competitor_compare")}</td>
-      <td class="status">${product.updated_at ? new Date(product.updated_at).toLocaleString() : ""}</td>
+    `;
+  }
+  if (column.key === "image_url") return `<td class="image-cell">${renderImage(product)}</td>`;
+  if (column.key === "expected_profit") return `<td class="profit-cell">${escapeHtml(expectedProfit(product))}</td>`;
+  if (column.key === "status") return `<td class="status">${product.updated_at ? new Date(product.updated_at).toLocaleString() : ""}</td>`;
+  if (editableFields.includes(column.key)) return `<td>${renderInput(product, column.key, column.type || "text")}</td>`;
+  return `<td>${escapeHtml(formatValue(product[column.key]))}</td>`;
+}
+
+function renderTable() {
+  const activeColumns = visibleColumns();
+  $("tableHead").innerHTML = `<tr>${activeColumns.map((column) => `<th>${column.label}</th>`).join("")}</tr>`;
+  const rows = state.products.filter(productMatches).map((product) => `
+    <tr class="${product.offer_id === state.selectedOfferId ? "selected-row" : ""}" data-row-offer="${escapeHtml(product.offer_id)}">
+      ${activeColumns.map((column) => renderCell(product, column)).join("")}
     </tr>
   `);
-
-  $("productBody").innerHTML = rows.join("") || `<tr><td colspan="13">没有匹配商品</td></tr>`;
+  $("productBody").innerHTML = rows.join("") || `<tr><td colspan="${activeColumns.length}">没有匹配商品</td></tr>`;
 }
 
 function render() {
+  renderColumnControls();
   renderStats();
   renderTable();
   renderTrend();
@@ -228,7 +283,6 @@ function renderTrend() {
   const padding = 28;
   const points = state.metrics.map((item, index) => ({
     index,
-    date: item.metric_date,
     sales: Number(item.sales_units || 0),
     ad: Number(item.ad_ratio || 0)
   }));
@@ -265,9 +319,7 @@ async function saveField(offerId, field, value, version) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ [field]: normalizePatchValue(field, value) })
   });
-  if (!response.ok) {
-    throw new Error(`保存失败：${response.status}`);
-  }
+  if (!response.ok) throw new Error(`保存失败：${response.status}`);
   const payload = await response.json();
   if (state.versions.get(statusKey(offerId, field)) !== version) return;
   const product = getProduct(offerId);
@@ -277,6 +329,7 @@ async function saveField(offerId, field, value, version) {
   }
   setStatus(offerId, field, "saved", "已保存");
   if (field === "image_url") render();
+  if (["price", "purchase_cost", "commission_rate", "ad_ratio", "return_rate", "freight_rate", "weight"].includes(field)) renderTable();
 }
 
 function scheduleSave(offerId, field, value) {
@@ -304,7 +357,7 @@ function handleEdit(event) {
   const offerId = target.dataset.offer;
   const field = target.dataset.field;
   const product = getProduct(offerId);
-  if (!product || !fields.includes(field)) return;
+  if (!product || !editableFields.includes(field)) return;
   product[field] = target.value;
   setStatus(offerId, field, "saving", "待保存");
   scheduleSave(offerId, field, target.value);
@@ -330,7 +383,16 @@ async function addProduct(event) {
   await loadDashboard();
 }
 
+loadVisibleColumns();
 document.addEventListener("input", handleEdit);
+document.addEventListener("change", (event) => {
+  const key = event.target.dataset.columnToggle;
+  if (!key) return;
+  if (event.target.checked) state.visibleColumns.add(key);
+  else state.visibleColumns.delete(key);
+  saveVisibleColumns();
+  renderTable();
+});
 document.addEventListener("click", (event) => {
   const row = event.target.closest("[data-row-offer]");
   if (!row) return;
