@@ -233,7 +233,11 @@ function pick(row, names) {
 
 function rowDate(row) {
   const value = pick(row, ["date", "day", "metric_date", "dateFrom", "from"]);
-  return value ? String(value).slice(0, 10) : "";
+  if (!value) return "";
+  const text = String(value).slice(0, 10);
+  const dotted = text.match(/^(\d{2})\.(\d{2})\.(\d{4})$/);
+  if (dotted) return `${dotted[3]}-${dotted[2]}-${dotted[1]}`;
+  return text;
 }
 
 function rowSpend(row) {
