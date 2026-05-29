@@ -3,6 +3,10 @@ CREATE TABLE IF NOT EXISTS products (
   offer_id TEXT NOT NULL UNIQUE,
   product_id TEXT,
   ozon_sku TEXT,
+  description_category_id TEXT,
+  type_id TEXT,
+  category_name TEXT,
+  type_name TEXT,
   title TEXT,
   image_url TEXT,
   fbo_stock NUMERIC,
@@ -23,6 +27,18 @@ CREATE TABLE IF NOT EXISTS products (
 
 ALTER TABLE products
 ADD COLUMN IF NOT EXISTS ozon_sku TEXT;
+
+ALTER TABLE products
+ADD COLUMN IF NOT EXISTS description_category_id TEXT;
+
+ALTER TABLE products
+ADD COLUMN IF NOT EXISTS type_id TEXT;
+
+ALTER TABLE products
+ADD COLUMN IF NOT EXISTS category_name TEXT;
+
+ALTER TABLE products
+ADD COLUMN IF NOT EXISTS type_name TEXT;
 
 ALTER TABLE products
 ADD COLUMN IF NOT EXISTS fbo_stock NUMERIC;
