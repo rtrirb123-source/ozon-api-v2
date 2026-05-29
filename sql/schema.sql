@@ -18,6 +18,9 @@ CREATE TABLE IF NOT EXISTS products (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+ALTER TABLE products
+ADD COLUMN IF NOT EXISTS ozon_sku TEXT;
+
 CREATE INDEX IF NOT EXISTS products_updated_at_idx ON products (updated_at DESC);
 CREATE INDEX IF NOT EXISTS products_product_id_idx ON products (product_id);
 CREATE INDEX IF NOT EXISTS products_ozon_sku_idx ON products (ozon_sku);
