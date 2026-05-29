@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Ozon 看板</title>
-    <link rel="stylesheet" href="./styles.css?v=20260529-3" />
+    <link rel="stylesheet" href="./styles.css?v=20260529-4" />
   </head>
   <body>
     <div class="app">
@@ -15,6 +15,11 @@
         </div>
         <div class="actions">
           <input id="searchInput" type="search" placeholder="搜索 offer_id / product_id / 竞品" />
+          <select id="salesSort">
+            <option value="desc">当日销量 高到低</option>
+            <option value="asc">当日销量 低到高</option>
+            <option value="none">默认排序</option>
+          </select>
           <button id="refreshBtn" type="button">刷新</button>
           <button id="addBtn" type="button">新增商品</button>
         </div>
@@ -71,6 +76,6 @@
       </form>
     </dialog>
 
-    <script src="./app.js?v=20260529-3"></script>
+    <script src="./app.js?v=20260529-4"></script>
   </body>
 </html>
