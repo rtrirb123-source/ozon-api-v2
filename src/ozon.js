@@ -9,6 +9,12 @@ function formatDate(date) {
   return date.toISOString().slice(0, 10);
 }
 
+function moscowDateOffset(daysOffset = 0) {
+  const date = new Date(Date.now() + 3 * 60 * 60 * 1000);
+  date.setUTCDate(date.getUTCDate() + daysOffset);
+  return date.toISOString().slice(0, 10);
+}
+
 function requestJson(path, body) {
   return new Promise((resolve, reject) => {
     if (!config.ozonClientId || !config.ozonApiKey) {
@@ -348,21 +354,105 @@ async function fetchProductInfo(offerIds) {
   return items;
 }
 
+async function fetchAllProductList() {
+  const items = [];
+  let lastId = "";
+  const limit = 1000;
+
+  while (true) {
+    const response = await requestJson("/v3/product/list", {
+      filter: { visibility: "ALL" },
+      limit,
+      last_id: lastId
+    });
+    const chunk = response.result?.items || [];
+    items.push(...chunk);
+    lastId = response.result?.last_id || "";
+    if (!lastId || chunk.length < limit) break;
+  }
+
+  return items;
+}
+
+async function fetchAllStocks() {
+  const items = [];
+  let cursor = "";
+  const limit = 1000;
+
+  while (true) {
+    const response = await requestJson("/v4/product/info/stocks", {
+      filter: { visibility: "ALL" },
+      limit,
+      cursor
+    });
+    const chunk = response.items || [];
+    items.push(...chunk);
+    cursor = response.cursor || "";
+    if (!cursor || chunk.length < limit) break;
+  }
+
+  return items;
+}
+
+function summarizeStock(item) {
+  const summary = { fbo_stock: 0, fbs_stock: 0, ozon_sku: "" };
+  for (const stock of item.stocks || []) {
+    const present = Number(stock.present || 0);
+    if (stock.sku && !summary.ozon_sku) summary.ozon_sku = String(stock.sku);
+    if (stock.type === "fbo") summary.fbo_stock += present;
+    if (stock.type === "fbs") summary.fbs_stock += present;
+  }
+  return summary;
+}
+
+async function fetchYesterdaySales() {
+  const yesterday = moscowDateOffset(-1);
+  const response = await requestJson("/v1/analytics/data", {
+    date_from: yesterday,
+    date_to: yesterday,
+    metrics: ["ordered_units"],
+    dimension: ["sku", "day"],
+    filters: [],
+    sort: [{ key: "ordered_units", order: "DESC" }],
+    limit: 1000,
+    offset: 0
+  });
+
+  const sales = new Map();
+  for (const row of response.result?.data || []) {
+    const sku = String(dimensionAt(row, 0) || dimensionValue(row, ["sku", "SKU"]));
+    if (!sku) continue;
+    sales.set(sku, (sales.get(sku) || 0) + (metricValue(row, 0) || 0));
+  }
+  return { date: yesterday, sales };
+}
+
 async function syncOzonProducts() {
-  const productRows = await products.listProducts({ limit: 1000 });
-  const offerIds = productRows.map((product) => product.offer_id).filter(Boolean);
+  const listItems = await fetchAllProductList();
+  const offerIds = listItems.map((product) => product.offer_id).filter(Boolean);
   const items = await fetchProductInfo(offerIds);
+  const stockItems = await fetchAllStocks();
+  const { date: yesterdayDate, sales: yesterdaySales } = await fetchYesterdaySales();
+  const infoByOffer = new Map(items.map((item) => [String(item.offer_id || ""), item]));
+  const stockByOffer = new Map(stockItems.map((item) => [String(item.offer_id || ""), summarizeStock(item)]));
   let updated = 0;
 
-  for (const item of items) {
+  for (const listItem of listItems) {
+    const item = infoByOffer.get(String(listItem.offer_id || "")) || {};
+    const stock = stockByOffer.get(String(listItem.offer_id || "")) || {};
     const sku = item.sku || item.sources?.[0]?.sku || item.stocks?.stocks?.[0]?.sku;
-    if (!item.offer_id || !sku) continue;
+    const ozonSku = sku || stock.ozon_sku || "";
+    if (!listItem.offer_id) continue;
     const primaryImage = Array.isArray(item.primary_image) ? item.primary_image[0] : "";
-    await products.updateProduct(item.offer_id, {
+    await products.createProduct({
+      offer_id: String(listItem.offer_id),
       product_id: String(item.id || ""),
-      ozon_sku: String(sku),
+      ozon_sku: String(ozonSku),
       title: item.name || "",
-      image_url: primaryImage || item.images?.[0] || ""
+      image_url: primaryImage || item.images?.[0] || "",
+      fbo_stock: stock.fbo_stock || 0,
+      fbs_stock: stock.fbs_stock || 0,
+      yesterday_sales: ozonSku ? yesterdaySales.get(String(ozonSku)) || 0 : 0
     });
     updated += 1;
   }
@@ -370,6 +460,8 @@ async function syncOzonProducts() {
   return {
     requested: offerIds.length,
     returned: items.length,
+    stockRows: stockItems.length,
+    yesterdayDate,
     updated
   };
 }
