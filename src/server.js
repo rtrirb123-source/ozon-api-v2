@@ -79,6 +79,8 @@ async function route(req, res) {
         "GET /api/products",
         "POST /api/products",
         "GET /api/products/:offer_id",
+        "GET /api/products/:offer_id/metrics",
+        "GET /api/metrics/:offer_id",
         "PATCH /api/products/:offer_id",
         "DELETE /api/products/:offer_id"
       ]
@@ -93,6 +95,17 @@ async function route(req, res) {
 
   if (req.method === "GET" && path === "/api/dashboard") {
     sendJson(req, res, 200, { ok: true, data: await products.dashboard() });
+    return;
+  }
+
+  const metricsAliasMatch = path.match(/^\/api\/metrics\/([^/]+)$/);
+  if (metricsAliasMatch && req.method === "GET") {
+    sendJson(req, res, 200, {
+      ok: true,
+      data: await products.listMetrics(metricsAliasMatch[1], {
+        days: url.searchParams.get("days") || 30
+      })
+    });
     return;
   }
 
