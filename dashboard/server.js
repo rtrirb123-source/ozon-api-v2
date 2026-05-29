@@ -26,7 +26,11 @@ http
         res.end("not found");
         return;
       }
-      res.writeHead(200, { "Content-Type": types[path.extname(file)] || "application/octet-stream" });
+      const cacheControl = pathname === "/index.html" ? "no-cache" : "public, max-age=31536000, immutable";
+      res.writeHead(200, {
+        "Content-Type": types[path.extname(file)] || "application/octet-stream",
+        "Cache-Control": cacheControl
+      });
       res.end(data);
     });
   })
