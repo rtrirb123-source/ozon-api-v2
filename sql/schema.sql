@@ -5,6 +5,9 @@ CREATE TABLE IF NOT EXISTS products (
   ozon_sku TEXT,
   title TEXT,
   image_url TEXT,
+  fbo_stock NUMERIC,
+  fbs_stock NUMERIC,
+  yesterday_sales NUMERIC,
   strategy TEXT,
   commission_rate NUMERIC,
   purchase_cost NUMERIC,
@@ -20,6 +23,15 @@ CREATE TABLE IF NOT EXISTS products (
 
 ALTER TABLE products
 ADD COLUMN IF NOT EXISTS ozon_sku TEXT;
+
+ALTER TABLE products
+ADD COLUMN IF NOT EXISTS fbo_stock NUMERIC;
+
+ALTER TABLE products
+ADD COLUMN IF NOT EXISTS fbs_stock NUMERIC;
+
+ALTER TABLE products
+ADD COLUMN IF NOT EXISTS yesterday_sales NUMERIC;
 
 CREATE INDEX IF NOT EXISTS products_updated_at_idx ON products (updated_at DESC);
 CREATE INDEX IF NOT EXISTS products_product_id_idx ON products (product_id);
