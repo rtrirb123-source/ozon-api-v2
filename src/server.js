@@ -109,6 +109,17 @@ async function route(req, res) {
     return;
   }
 
+  if (req.method === "GET" && path === "/api/sync/ozon/preview") {
+    sendJson(req, res, 200, {
+      ok: true,
+      data: await ozon.previewOzonAnalytics({
+        days: url.searchParams.get("days") || 3,
+        limit: url.searchParams.get("limit") || 10
+      })
+    });
+    return;
+  }
+
   const metricsAliasMatch = path.match(/^\/api\/metrics\/([^/]+)$/);
   if (metricsAliasMatch && req.method === "GET") {
     sendJson(req, res, 200, {
