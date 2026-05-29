@@ -87,9 +87,50 @@ function buildProductLookup(productRows) {
   for (const product of productRows) {
     if (product.offer_id) lookup.set(String(product.offer_id), product.offer_id);
     if (product.product_id) lookup.set(String(product.product_id), product.offer_id);
-    if (product.sku) lookup.set(String(product.sku), product.offer_id);
+    if (product.ozon_sku) lookup.set(String(product.ozon_sku), product.offer_id);
   }
   return lookup;
+}
+
+async function fetchProductInfo(offerIds) {
+  const items = [];
+  const chunkSize = 100;
+  for (let index = 0; index < offerIds.length; index += chunkSize) {
+    const chunk = offerIds.slice(index, index + chunkSize);
+    const response = await requestJson("/v3/product/info/list", {
+      offer_id: chunk,
+      product_id: [],
+      sku: []
+    });
+    items.push(...(response.items || []));
+  }
+  return items;
+}
+
+async function syncOzonProducts() {
+  const productRows = await products.listProducts({ limit: 1000 });
+  const offerIds = productRows.map((product) => product.offer_id).filter(Boolean);
+  const items = await fetchProductInfo(offerIds);
+  let updated = 0;
+
+  for (const item of items) {
+    const sku = item.sku || item.sources?.[0]?.sku || item.stocks?.stocks?.[0]?.sku;
+    if (!item.offer_id || !sku) continue;
+    const primaryImage = Array.isArray(item.primary_image) ? item.primary_image[0] : "";
+    await products.updateProduct(item.offer_id, {
+      product_id: String(item.id || ""),
+      ozon_sku: String(sku),
+      title: item.name || "",
+      image_url: primaryImage || item.images?.[0] || ""
+    });
+    updated += 1;
+  }
+
+  return {
+    requested: offerIds.length,
+    returned: items.length,
+    updated
+  };
 }
 
 async function fetchSalesAnalytics(days = 30) {
@@ -124,6 +165,7 @@ async function fetchSalesAnalytics(days = 30) {
 }
 
 async function syncOzonMetrics({ days = 30 } = {}) {
+  await syncOzonProducts();
   const productRows = await products.listProducts({ limit: 1000 });
   const lookup = buildProductLookup(productRows);
   const analyticsRows = await fetchSalesAnalytics(days);
@@ -185,4 +227,4 @@ async function previewOzonAnalytics({ days = 3, limit = 10 } = {}) {
   return response.result?.data || [];
 }
 
-module.exports = { previewOzonAnalytics, syncOzonMetrics };
+module.exports = { previewOzonAnalytics, syncOzonMetrics, syncOzonProducts };
