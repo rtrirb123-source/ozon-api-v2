@@ -4,6 +4,7 @@ const { config } = require("./config");
 const { query } = require("./db");
 const { migrate } = require("./schema");
 const products = require("./products");
+const ozon = require("./ozon");
 const packageJson = require("../package.json");
 
 const startedAt = new Date().toISOString();
@@ -95,6 +96,16 @@ async function route(req, res) {
 
   if (req.method === "GET" && path === "/api/dashboard") {
     sendJson(req, res, 200, { ok: true, data: await products.dashboard() });
+    return;
+  }
+
+  if (req.method === "POST" && path === "/api/sync/ozon") {
+    sendJson(req, res, 200, {
+      ok: true,
+      data: await ozon.syncOzonMetrics({
+        days: url.searchParams.get("days") || 30
+      })
+    });
     return;
   }
 
