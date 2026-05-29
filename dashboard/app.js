@@ -1,6 +1,7 @@
 const API_BASE = "https://ozon-api-v2-production.up.railway.app";
 const dashboardUrl = `${API_BASE}/api/dashboard`;
 const columnsKey = "ozon-dashboard-visible-columns";
+const dashboardCacheKey = "ozon-dashboard-cache-v1";
 
 const state = {
   products: [],
@@ -131,9 +132,11 @@ function visibleColumns() {
 
 async function loadDashboard() {
   setSyncText("正在加载数据...");
+  renderCachedDashboard();
   const response = await fetch(dashboardUrl);
   if (!response.ok) throw new Error(`加载失败：${response.status}`);
   const payload = await response.json();
+  localStorage.setItem(dashboardCacheKey, JSON.stringify(payload));
   state.products = payload.data.products || [];
   state.summary = payload.data.summary || {};
   if (!state.selectedOfferId && state.products[0]) {
@@ -142,6 +145,21 @@ async function loadDashboard() {
   }
   render();
   setSyncText(`已加载 ${state.products.length} 个商品，更新时间 ${new Date(payload.data.fetchedAt).toLocaleString()}`);
+}
+
+function renderCachedDashboard() {
+  if (state.products.length) return;
+  try {
+    const payload = JSON.parse(localStorage.getItem(dashboardCacheKey) || "null");
+    if (!payload?.data?.products?.length) return;
+    state.products = payload.data.products || [];
+    state.summary = payload.data.summary || {};
+    if (!state.selectedOfferId && state.products[0]) state.selectedOfferId = state.products[0].offer_id;
+    render();
+    setSyncText(`先显示缓存数据 ${state.products.length} 个商品，正在后台刷新...`);
+  } catch {
+    localStorage.removeItem(dashboardCacheKey);
+  }
 }
 
 async function loadMetrics(offerId) {
@@ -224,7 +242,7 @@ function expectedProfit(product) {
 function renderImage(product) {
   const image = product.image_url;
   return `
-    ${image ? `<img class="image-preview" src="${escapeHtml(image)}" alt="${escapeHtml(product.offer_id)}" />` : `<div class="image-empty">无图片</div>`}
+    ${image ? `<img class="image-preview" src="${escapeHtml(image)}" alt="${escapeHtml(product.offer_id)}" loading="lazy" decoding="async" />` : `<div class="image-empty">无图片</div>`}
     ${renderInput(product, "image_url")}
   `;
 }
