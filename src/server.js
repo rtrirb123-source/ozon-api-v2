@@ -5,6 +5,7 @@ const { query } = require("./db");
 const { migrate } = require("./schema");
 const products = require("./products");
 const ozon = require("./ozon");
+const { calculateFboCommission } = require("./commission");
 const packageJson = require("../package.json");
 
 const startedAt = new Date().toISOString();
@@ -200,7 +201,15 @@ async function route(req, res) {
     }
 
     if (req.method === "PATCH") {
-      const product = await products.updateProduct(offerId, await readJson(req));
+      const body = await readJson(req);
+      if (body.price !== undefined && body.commission_rate === undefined) {
+        const existing = await products.getProduct(offerId);
+        if (existing) {
+          const commission = calculateFboCommission(existing, body.price);
+          if (commission) body.commission_rate = commission.commission_rate;
+        }
+      }
+      const product = await products.updateProduct(offerId, body);
       sendJson(req, res, 200, { ok: true, data: product });
       return;
     }
