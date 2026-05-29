@@ -44,7 +44,8 @@ async function health() {
     database: {
       configured: Boolean(config.databaseUrl),
       connected: false
-    }
+    },
+    memoryStore: process.env.MEMORY_STORE === "true"
   };
 
   if (config.databaseUrl) {
@@ -168,6 +169,31 @@ async function route(req, res) {
     }
   }
 
+  const metricsMatch = path.match(/^\/api\/products\/([^/]+)\/metrics$/);
+  if (metricsMatch) {
+    const offerId = metricsMatch[1];
+
+    if (req.method === "GET") {
+      sendJson(req, res, 200, {
+        ok: true,
+        data: await products.listMetrics(offerId, {
+          days: url.searchParams.get("days") || 30
+        })
+      });
+      return;
+    }
+
+    if (req.method === "POST") {
+      const body = await readJson(req);
+      const metrics = Array.isArray(body) ? body : body.metrics || [];
+      sendJson(req, res, 200, {
+        ok: true,
+        data: await products.upsertMetrics(offerId, metrics)
+      });
+      return;
+    }
+  }
+
   sendJson(req, res, 404, { ok: false, error: "Route not found" });
 }
 
@@ -187,8 +213,12 @@ const server = http.createServer((req, res) => {
 
 async function start() {
   if (config.databaseUrl && config.autoMigrate) {
-    await migrate();
-    console.log("[ozon-api-v2] database schema is ready");
+    try {
+      await migrate();
+      console.log("[ozon-api-v2] database schema is ready");
+    } catch (error) {
+      console.error("[ozon-api-v2] auto migration failed; service will still start", error.message);
+    }
   }
 
   server.listen(config.port, "0.0.0.0", () => {
