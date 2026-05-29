@@ -93,6 +93,39 @@ p {
   margin-bottom: 16px;
 }
 
+.column-panel {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin-bottom: 16px;
+}
+
+.column-title {
+  color: #334155;
+  font-weight: 700;
+  white-space: nowrap;
+  line-height: 28px;
+}
+
+.column-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+}
+
+.column-controls label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 28px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
 .trend-panel {
   background: var(--panel);
   border: 1px solid var(--line);
@@ -223,7 +256,7 @@ p {
 
 table {
   width: 100%;
-  min-width: 1680px;
+  min-width: 1980px;
   border-collapse: collapse;
 }
 
@@ -332,6 +365,12 @@ th {
 .status {
   min-width: 92px;
   font-size: 12px;
+}
+
+.profit-cell {
+  color: var(--ok);
+  font-weight: 700;
+  min-width: 90px;
 }
 
 .status.saving {
