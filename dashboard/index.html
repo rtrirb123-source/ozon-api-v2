@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Ozon 看板</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app">
+      <header class="topbar">
+        <div>
+          <h1>Ozon 看板</h1>
+          <p id="syncText">正在加载数据...</p>
+        </div>
+        <div class="actions">
+          <input id="searchInput" type="search" placeholder="搜索 offer_id / product_id / 竞品" />
+          <button id="refreshBtn" type="button">刷新</button>
+          <button id="addBtn" type="button">新增商品</button>
+        </div>
+      </header>
+
+      <section class="trend-panel">
+        <div class="trend-head">
+          <div>
+            <h2>销量动态</h2>
+            <p id="trendTitle">选择一个商品查看近 30 天销量和广告比例变化</p>
+          </div>
+          <div class="trend-legend">
+            <span><i class="sales-dot"></i>销量</span>
+            <span><i class="ad-dot"></i>广告比例</span>
+          </div>
+        </div>
+        <div id="trendChart" class="trend-chart">
+          <div class="trend-empty">暂无动态数据</div>
+        </div>
+      </section>
+
+      <section class="stats" id="stats"></section>
+
+      <main class="table-shell">
+        <table>
+          <thead>
+            <tr>
+              <th>商品</th>
+              <th>Ozon SKU</th>
+              <th>图片</th>
+              <th>佣金率</th>
+              <th>采购成本</th>
+              <th>重量</th>
+              <th>运费系数</th>
+              <th>退货率</th>
+              <th>广告比例</th>
+              <th>售价</th>
+              <th>产品策略</th>
+              <th>竞品对比</th>
+              <th>状态</th>
+            </tr>
+          </thead>
+          <tbody id="productBody"></tbody>
+        </table>
+      </main>
+    </div>
+
+    <div class="toast" id="toast" hidden></div>
+
+    <dialog id="addDialog">
+      <form method="dialog" class="dialog-card">
+        <h2>新增商品</h2>
+        <label>
+          offer_id
+          <input id="newOfferId" required />
+        </label>
+        <label>
+          product_id
+          <input id="newProductId" />
+        </label>
+        <menu>
+          <button value="cancel" type="button" id="cancelAddBtn" class="secondary">取消</button>
+          <button value="default" type="submit">保存</button>
+        </menu>
+      </form>
+    </dialog>
+
+    <script src="./app.js"></script>
+  </body>
+</html>
