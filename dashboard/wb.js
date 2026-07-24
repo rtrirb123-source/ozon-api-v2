@@ -4,6 +4,7 @@ const state = {
   summary: {},
   metrics: [],
   storeMetrics: [],
+  businessReport: null,
   selectedNmId: "",
   search: "",
   salesSort: "desc",
@@ -40,6 +41,14 @@ async function loadStoreMetrics() {
   if (!res.ok || !payload.ok) throw new Error(payload.error || "店铺销售额动态加载失败");
   state.storeMetrics = payload.data || [];
   renderRevenueTrend();
+}
+
+async function loadBusinessReport() {
+  const res = await fetch("./wb-june-business.json?v=20260724-june-business-1");
+  const payload = await res.json();
+  if (!res.ok) throw new Error("6月经营数据加载失败");
+  state.businessReport = payload || null;
+  renderBusinessBoard();
 }
 
 function $(id) {
@@ -166,6 +175,7 @@ async function loadDashboard() {
   state.metricDate = formatDateKey(payload.data.summary?.selectedDate) || state.metricDate;
   if ($("metricDateInput")) $("metricDateInput").value = state.metricDate;
   loadStoreMetrics().catch(error => showToast(error.message));
+  loadBusinessReport().catch(error => showToast(error.message));
   render();
 
   $("syncText").textContent =
@@ -540,27 +550,31 @@ function renderBusinessRevenueChart() {
 function renderBusinessTopProducts() {
   const node = $("wbBusinessTopProducts");
   if (!node) return;
-  const rows = [...(state.products || [])]
-    .sort((a, b) => toNumber(b.selected_revenue || b.revenue || 0) - toNumber(a.selected_revenue || a.revenue || 0))
+  const report = state.businessReport;
+  const rows = report ? [...(report.rows || [])] : [...(state.products || [])];
+  rows
+    .sort((a, b) => toNumber(b.revenue || b.selected_revenue || 0) - toNumber(a.revenue || a.selected_revenue || 0))
     .slice(0, 8);
   if (!rows.length) {
     node.innerHTML = '<div class="trend-empty">暂无商品排行数据</div>';
     return;
   }
 
-  const maxRevenue = Math.max(1, ...rows.map(item => toNumber(item.selected_revenue || item.revenue || 0)));
+  const topRows = rows.slice(0, 8);
+  const maxRevenue = Math.max(1, ...topRows.map(item => toNumber(item.revenue || item.selected_revenue || 0)));
   node.innerHTML = `
-    <div class="chart-title">当前日期销售额 Top 8</div>
+    <div class="chart-title">${report ? "6月销售额 Top 8" : "当前日期销售额 Top 8"}</div>
     <div class="business-ranking">
-      ${rows.map((item, index) => {
-        const revenue = toNumber(item.selected_revenue || item.revenue || 0);
-        const sales = toNumber(item.selected_sales ?? item.yesterday_sales ?? 0);
+      ${topRows.map((item, index) => {
+        const revenue = toNumber(item.revenue || item.selected_revenue || 0);
+        const sales = toNumber(item.sales ?? item.selected_sales ?? item.yesterday_sales ?? 0);
         const width = Math.max(4, revenue / maxRevenue * 100);
+        const title = item.barcodeSku || item.vendor_code || item.ourSku || item.title || item.nm_id;
         return `
           <div class="business-rank-row">
             <span class="rank-index">${index + 1}</span>
             <div class="rank-main">
-              <div class="rank-title">${escapeHtml(item.vendor_code || item.title || item.nm_id)}</div>
+              <div class="rank-title">${escapeHtml(title)}</div>
               <div class="rank-bar"><i style="width:${width}%"></i></div>
             </div>
             <div class="rank-value">
@@ -574,9 +588,109 @@ function renderBusinessTopProducts() {
   `;
 }
 
+function renderBusinessCostChart(report) {
+  const node = $("wbBusinessRevenueChart");
+  if (!node) return;
+  if (!report) {
+    renderBusinessRevenueChart();
+    return;
+  }
+  const totals = report.totals || {};
+  const bars = [
+    ["费用合计", totals.fees],
+    ["物流相关费用", totals.logisticsFees],
+    ["仓储费", totals.storageFees],
+    ["扣款/罚款/验收费", totals.penaltyFees]
+  ];
+  const max = Math.max(1, ...bars.map(([, value]) => Math.abs(toNumber(value))));
+  node.innerHTML = `
+    <div class="chart-title">6月费用结构</div>
+    <div class="business-cost-bars">
+      ${bars.map(([label, value]) => {
+        const amount = toNumber(value);
+        const width = Math.max(2, Math.abs(amount) / max * 100);
+        return `
+          <div class="business-cost-row">
+            <span>${escapeHtml(label)}</span>
+            <div class="rank-bar"><i style="width:${width}%"></i></div>
+            <strong>${formatMoney(amount)}</strong>
+          </div>
+        `;
+      }).join("")}
+    </div>
+  `;
+}
+
+function renderBusinessDetailTable(report) {
+  const node = $("wbBusinessTable");
+  if (!node) return;
+  if (!report || !(report.rows || []).length) {
+    node.innerHTML = "";
+    return;
+  }
+  const rows = (report.rows || []).slice(0, 20);
+  node.innerHTML = `
+    <div class="business-table-title">6月按条码SKU合并明细 Top 20</div>
+    <div class="business-table-shell">
+      <table class="business-table">
+        <thead>
+          <tr>
+            <th>图片</th>
+            <th>条码SKU</th>
+            <th>我们的SKU</th>
+            <th>WB销量</th>
+            <th>WB销售额</th>
+            <th>应付卖家</th>
+            <th>费用合计</th>
+            <th>物流相关费用</th>
+            <th>关联商品</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows.map(item => `
+            <tr>
+              <td>${item.imageUrl ? `<img class="business-thumb" src="${escapeHtml(item.imageUrl)}" alt="">` : ""}</td>
+              <td><strong>${escapeHtml(item.barcodeSku)}</strong></td>
+              <td>${escapeHtml(item.ourSku)}</td>
+              <td>${toNumber(item.sales).toLocaleString("ru-RU")}</td>
+              <td>${formatMoney(item.revenue)}</td>
+              <td>${formatMoney(item.payable)}</td>
+              <td>${formatMoney(item.fees)}</td>
+              <td>${formatMoney(item.logisticsFees)}</td>
+              <td class="business-links">${escapeHtml(item.wbLocalLinks || "")}</td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
 function renderBusinessBoard() {
   const stats = $("wbBusinessStats");
   if (!stats) return;
+
+  const report = state.businessReport;
+  if (report) {
+    const totals = report.totals || {};
+    const selectedSales = toNumber(totals.sales);
+    const selectedRevenue = toNumber(totals.revenue);
+    const avgPrice = selectedSales ? selectedRevenue / selectedSales : 0;
+    const title = $("wbBusinessTitle");
+    if (title) title.textContent = `${report.period?.label || "2026年6月"}：根据库存关系汇总表按条码SKU合并统计，数据源为本地Excel`;
+    stats.innerHTML = [
+      renderBusinessStat("6月销量", `${selectedSales.toLocaleString("ru-RU")} 件`, "Excel：库存关系汇总"),
+      renderBusinessStat("6月销售额", formatMoney(selectedRevenue), "按条码SKU合并"),
+      renderBusinessStat("应付卖家", formatMoney(totals.payable), "财务明细汇总"),
+      renderBusinessStat("费用合计", formatMoney(totals.fees), "平台/服务等费用"),
+      renderBusinessStat("均价", formatMoney(avgPrice), "销售额 / 销量"),
+      renderBusinessStat("合并SKU数", `${toNumber(totals.itemCount).toLocaleString("ru-RU")} 个`, "库存看板关系")
+    ].join("");
+    renderBusinessCostChart(report);
+    renderBusinessTopProducts();
+    renderBusinessDetailTable(report);
+    return;
+  }
 
   const summary = state.summary || {};
   const selectedSales = toNumber(summary.totalSales || summary.totalYesterdaySales || sumProducts("selected_sales") || sumProducts("yesterday_sales"));
@@ -598,6 +712,7 @@ function renderBusinessBoard() {
   ].join("");
   renderBusinessRevenueChart();
   renderBusinessTopProducts();
+  renderBusinessDetailTable(null);
 }
 
 function updateRowProfit(nmId) {
