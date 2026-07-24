@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>WB 本土销量看板</title>
-  <link rel="stylesheet" href="./styles.css?v=20260724-wb-subnav-business-2" />
+  <link rel="stylesheet" href="./styles.css?v=20260724-wb-business-visible-3" />
   <link rel="stylesheet" href="/auth-shared.css?v=20260724-2">
   <script src="/auth-guard.js?v=20260724-2"></script>
 </head>
@@ -15,6 +15,10 @@
         <h1>WB 本土销量看板</h1>
         <p id="syncText">正在加载 WB 数据...</p>
         <p id="syncStatusText" class="sync-status-text">同步状态读取中...</p>
+        <div class="portal-subnav wb-subnav wb-header-subnav" role="tablist" aria-label="WB 本土看板子项">
+          <button class="active" type="button" data-wb-view="products">商品看板</button>
+          <button type="button" data-wb-view="business">经营看板</button>
+        </div>
       </div>
       <div class="actions">
         <input id="searchInput" type="search" placeholder="搜索 nm_id / 商品 / 类目" />
@@ -34,11 +38,6 @@
       <button class="market-tab" id="ozonTab" type="button">Ozon 本土看板</button>
       <button class="market-tab active" type="button">WB 本土看板</button>
       <button class="market-tab" id="wbCrossTab" type="button">WB 跨境店</button>
-    </div>
-
-    <div class="portal-subnav wb-subnav" role="tablist" aria-label="WB 本土看板子项">
-      <button class="active" type="button" data-wb-view="products">商品看板</button>
-      <button type="button" data-wb-view="business">经营看板</button>
     </div>
 
     <section class="trend-panel wb-subview" data-wb-subview="products">
@@ -147,6 +146,6 @@
     </form>
   </dialog>
 
-  <script src="./wb.js?v=20260724-wb-subnav-business-2"></script>
+  <script src="./wb.js?v=20260724-wb-business-visible-3"></script>
 </body>
 </html>
