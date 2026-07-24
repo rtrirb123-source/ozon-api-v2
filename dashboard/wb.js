@@ -678,6 +678,12 @@ function renderBusinessBoard() {
     const avgPrice = selectedSales ? selectedRevenue / selectedSales : 0;
     const title = $("wbBusinessTitle");
     if (title) title.textContent = `${report.period?.label || "2026年6月"}：根据库存关系汇总表按条码SKU合并统计，数据源为本地Excel`;
+    const period = $("wbBusinessPeriod");
+    const periodStart = String(report.period?.start || "");
+    const periodMatch = periodStart.match(/^(\d{4})-(\d{2})/);
+    if (period) period.textContent = periodMatch
+      ? `${periodMatch[1]}年${Number(periodMatch[2])}月`
+      : (report.period?.label || "经营期间");
     stats.innerHTML = [
       renderBusinessStat("6月销量", `${selectedSales.toLocaleString("ru-RU")} 件`, "Excel：库存关系汇总"),
       renderBusinessStat("6月销售额", formatMoney(selectedRevenue), "按条码SKU合并"),
@@ -701,6 +707,12 @@ function renderBusinessBoard() {
   const activeProducts = (state.products || []).filter(item => toNumber(item.selected_sales ?? item.yesterday_sales ?? 0) > 0).length;
   const title = $("wbBusinessTitle");
   if (title) title.textContent = `当前日期：${summary.selectedDate || state.metricDate || "-"}；近 30 天趋势来自 WB 本土店铺数据`;
+  const period = $("wbBusinessPeriod");
+  const selectedDate = String(summary.selectedDate || state.metricDate || "");
+  const selectedMatch = selectedDate.match(/^(\d{4})-(\d{2})/);
+  if (period) period.textContent = selectedMatch
+    ? `${selectedMatch[1]}年${Number(selectedMatch[2])}月`
+    : "当前经营期间";
 
   stats.innerHTML = [
     renderBusinessStat("当前销量", `${selectedSales.toLocaleString("ru-RU")} 件`, "按当前选择日期"),
