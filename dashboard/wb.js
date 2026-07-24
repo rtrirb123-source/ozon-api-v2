@@ -561,27 +561,24 @@ function renderBusinessTopProducts() {
   }
 
   const topRows = rows.slice(0, 8);
-  const maxRevenue = Math.max(1, ...topRows.map(item => toNumber(item.revenue || item.selected_revenue || 0)));
   node.innerHTML = `
     <div class="chart-title">${report ? "6月销售额 Top 8" : "当前日期销售额 Top 8"}</div>
-    <div class="business-ranking">
+    <div class="wb-product-grid">
       ${topRows.map((item, index) => {
         const revenue = toNumber(item.revenue || item.selected_revenue || 0);
         const sales = toNumber(item.sales ?? item.selected_sales ?? item.yesterday_sales ?? 0);
-        const width = Math.max(4, revenue / maxRevenue * 100);
         const title = item.barcodeSku || item.vendor_code || item.ourSku || item.title || item.nm_id;
+        const imageUrl = item.imageUrl || item.image_url || "";
         return `
-          <div class="business-rank-row">
-            <span class="rank-index">${index + 1}</span>
-            <div class="rank-main">
-              <div class="rank-title">${escapeHtml(title)}</div>
-              <div class="rank-bar"><i style="width:${width}%"></i></div>
-            </div>
-            <div class="rank-value">
-              <strong>${formatMoney(revenue)}</strong>
-              <small>${sales} 件</small>
-            </div>
-          </div>
+          <article class="wb-product-card">
+            <span class="wb-product-rank">${index + 1}</span>
+            ${imageUrl
+              ? `<img src="${escapeHtml(imageUrl)}" alt="${escapeHtml(title)}" loading="lazy" />`
+              : `<div class="wb-product-placeholder">暂无图片</div>`}
+            <strong title="${escapeHtml(title)}">${escapeHtml(title)}</strong>
+            <span>${formatMoney(revenue)}</span>
+            <small>${sales} 件</small>
+          </article>
         `;
       }).join("")}
     </div>

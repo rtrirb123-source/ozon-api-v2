@@ -405,6 +405,67 @@ p {
   font-size: 12px;
   font-weight: 700;
 }
+.wb-product-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+.wb-product-card {
+  position: relative;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid #dce4ee;
+  border-radius: 9px;
+  background: #fbfcfe;
+}
+.wb-product-card img,
+.wb-product-placeholder {
+  width: 100%;
+  height: 92px;
+  object-fit: contain;
+  border-radius: 7px;
+  background: #fff;
+}
+.wb-product-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #a0aec0;
+  font-size: 12px;
+}
+.wb-product-card strong,
+.wb-product-card > span:not(.wb-product-rank),
+.wb-product-card small {
+  display: block;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.wb-product-card strong { margin-top: 7px; font-size: 12px; }
+.wb-product-card > span:not(.wb-product-rank) {
+  color: var(--wb-teal);
+  font-weight: 800;
+}
+.wb-product-card small { color: #718198; }
+.wb-product-rank {
+  position: absolute;
+  top: 7px;
+  left: 7px;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  color: #fff;
+  border-radius: 6px;
+  background: rgba(21, 34, 59, .86);
+  font-size: 11px;
+  font-weight: 800;
+}
+.business-cost-row .rank-bar i {
+  background: linear-gradient(90deg, var(--wb-gold), #f7c75e);
+}
 .wb-detail-card { padding: 0; overflow: hidden; }
 .wb-detail-card > .wb-panel-head { padding: 18px 18px 0; }
 
@@ -1358,6 +1419,10 @@ td.ozon-strategy-ratio {
 
   .business-stat strong {
     font-size: 20px;
+  }
+
+  .wb-product-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
