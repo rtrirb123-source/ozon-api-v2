@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>WB 本土销量看板</title>
-  <link rel="stylesheet" href="./styles.css?v=20260724-wb-business-visible-3" />
+  <link rel="stylesheet" href="./styles.css?v=20260724-wb-operations-style-1" />
   <link rel="stylesheet" href="/auth-shared.css?v=20260724-2">
   <script src="/auth-guard.js?v=20260724-2"></script>
 </head>
@@ -89,27 +89,65 @@
       </table>
     </main>
 
-    <section class="trend-panel wb-business-panel wb-subview" id="wbBusinessPanel" data-wb-subview="business" hidden>
-      <div class="trend-head">
-        <div>
-          <h2>WB 经营看板</h2>
-          <p id="wbBusinessTitle">按当前日期和近 30 天趋势汇总 WB 本土店经营表现</p>
+    <section class="wb-business-panel wb-subview" id="wbBusinessPanel" data-wb-subview="business" hidden>
+      <header class="wb-operations-heading">
+        <p class="wb-operations-eyebrow">WB · RUSSIA OPERATIONS</p>
+        <h2>WB 本土重点经营看板</h2>
+        <p id="wbBusinessTitle">按当前日期和近 30 天趋势汇总 WB 本土店经营表现</p>
+      </header>
+
+      <div class="wb-operations-hero">
+        <div class="wb-period">
+          <span class="wb-status-dot"></span>
+          <strong id="wbBusinessPeriod">2026年6月</strong>
+          <span>WB 本土 · RUB</span>
         </div>
-        <div class="trend-legend">
-          <span><i class="sales-dot"></i>销量</span>
-          <span><i class="ad-dot"></i>销售额</span>
+        <div class="wb-operations-legend" aria-label="图例">
+          <span><i class="wb-legend-sales"></i>销售</span>
+          <span><i class="wb-legend-cost"></i>平台及履约费用</span>
+          <span><i class="wb-legend-profit"></i>应付卖家</span>
         </div>
       </div>
-      <div id="wbBusinessStats" class="business-stats"></div>
-      <div class="business-grid">
-        <div id="wbBusinessRevenueChart" class="trend-chart">
-          <div class="trend-empty">暂无销售额数据</div>
-        </div>
-        <div id="wbBusinessTopProducts" class="trend-chart">
-          <div class="trend-empty">暂无商品排行数据</div>
-        </div>
+
+      <div id="wbBusinessStats" class="business-stats wb-kpi-grid"></div>
+
+      <div class="business-grid wb-insight-grid">
+        <article class="wb-operations-card">
+          <div class="wb-panel-head">
+            <div>
+              <span class="wb-panel-kicker">COST STRUCTURE</span>
+              <h3>费用结构</h3>
+            </div>
+            <span>按绝对金额</span>
+          </div>
+          <div id="wbBusinessRevenueChart" class="wb-insight-content">
+            <div class="trend-empty">暂无费用或趋势数据</div>
+          </div>
+        </article>
+        <article class="wb-operations-card">
+          <div class="wb-panel-head">
+            <div>
+              <span class="wb-panel-kicker">TOP PRODUCTS</span>
+              <h3>销售贡献 TOP 8</h3>
+            </div>
+            <span>按销售额</span>
+          </div>
+          <div id="wbBusinessTopProducts" class="wb-insight-content">
+            <div class="trend-empty">暂无商品排行数据</div>
+          </div>
+        </article>
       </div>
-      <div id="wbBusinessTable" class="business-table-wrap"></div>
+
+      <article class="wb-operations-card wb-detail-card">
+        <div class="wb-panel-head">
+          <div>
+            <span class="wb-panel-kicker">UNIT ECONOMICS</span>
+            <h3>商品经营明细</h3>
+          </div>
+          <span>按条码 SKU 合并</span>
+        </div>
+        <div id="wbBusinessTable" class="business-table-wrap"></div>
+      </article>
     </section>
   </div>
 
@@ -147,6 +185,6 @@
     </form>
   </dialog>
 
-  <script src="./wb.js?v=20260724-wb-business-visible-3"></script>
+  <script src="./wb.js?v=20260724-wb-operations-style-1"></script>
 </body>
 </html>
