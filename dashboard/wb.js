@@ -409,12 +409,14 @@ function render() {
 }
 
 function ensureWbSubnav() {
+  const headerTitle = document.querySelector(".topbar > div");
   const tabs = document.querySelector(".market-tabs");
-  if (!tabs) return;
+  const target = headerTitle || tabs;
+  if (!target) return;
   let nav = document.querySelector(".wb-subnav");
   if (!nav) {
     nav = document.createElement("div");
-    nav.className = "portal-subnav wb-subnav";
+    nav.className = "portal-subnav wb-subnav wb-header-subnav";
     nav.setAttribute("role", "tablist");
     nav.setAttribute("aria-label", "WB 本土看板子项");
     nav.innerHTML = `
@@ -422,7 +424,12 @@ function ensureWbSubnav() {
       <button type="button" data-wb-view="business">经营看板</button>
     `;
   }
-  if (tabs.nextElementSibling !== nav) tabs.insertAdjacentElement("afterend", nav);
+  nav.classList.add("wb-header-subnav");
+  if (headerTitle && headerTitle.lastElementChild !== nav) {
+    headerTitle.appendChild(nav);
+  } else if (!headerTitle && tabs.nextElementSibling !== nav) {
+    tabs.insertAdjacentElement("afterend", nav);
+  }
   nav.querySelectorAll("[data-wb-view]").forEach(button => {
     if (button.dataset.bound === "1") return;
     button.dataset.bound = "1";

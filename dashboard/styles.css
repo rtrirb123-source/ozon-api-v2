@@ -1212,3 +1212,4 @@ td.ozon-strategy-ratio {
 .portal-subnav a,.portal-subnav button{min-height:34px;padding:8px 14px;border:0;border-radius:8px;background:transparent;color:#52647d;text-decoration:none;font-weight:700;cursor:pointer}
 .portal-subnav a.active,.portal-subnav button.active{background:#fff;color:#102342;box-shadow:0 2px 8px rgba(16,35,66,.09)}
 .portal-subnav button:hover{background:#fff;color:#102342}
+.wb-header-subnav{margin:10px 0 0}
