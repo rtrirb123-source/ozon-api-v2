@@ -316,6 +316,9 @@ p {
 .wb-legend-cost { background: var(--wb-gold); }
 .wb-legend-profit { background: var(--wb-orange); }
 .wb-kpi-grid { margin: 16px 0; }
+
+.wb-subview[hidden] {
+  display: none !important;
 }
 
 .business-stats {
