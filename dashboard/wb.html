@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>WB 本土销量看板</title>
-  <link rel="stylesheet" href="./styles.css?v=20260617-wb-image-click-upload" />
+  <link rel="stylesheet" href="./styles.css?v=20260724-wb-subnav-business-2" />
   <link rel="stylesheet" href="/auth-shared.css?v=20260724-2">
   <script src="/auth-guard.js?v=20260724-2"></script>
 </head>
@@ -36,7 +36,12 @@
       <button class="market-tab" id="wbCrossTab" type="button">WB 跨境店</button>
     </div>
 
-    <section class="trend-panel">
+    <div class="portal-subnav wb-subnav" role="tablist" aria-label="WB 本土看板子项">
+      <button class="active" type="button" data-wb-view="products">商品看板</button>
+      <button type="button" data-wb-view="business">经营看板</button>
+    </div>
+
+    <section class="trend-panel wb-subview" data-wb-subview="products">
       <div class="trend-head">
         <div>
           <h2>销量动态</h2>
@@ -56,7 +61,7 @@
       </div>
     </section>
 
-    <section class="column-panel">
+    <section class="column-panel wb-subview" data-wb-subview="products">
       <div class="column-title">列表显示</div>
       <div class="column-controls">
         <label><input type="checkbox" checked disabled> 图片</label>
@@ -76,14 +81,36 @@
       </div>
     </section>
 
-    <section class="stats" id="stats"></section>
+    <section class="stats wb-subview" id="stats" data-wb-subview="products"></section>
 
-    <main class="table-shell">
+    <main class="table-shell wb-subview" data-wb-subview="products">
       <table>
         <thead id="tableHead"></thead>
         <tbody id="productBody"></tbody>
       </table>
     </main>
+
+    <section class="trend-panel wb-business-panel wb-subview" id="wbBusinessPanel" data-wb-subview="business" hidden>
+      <div class="trend-head">
+        <div>
+          <h2>WB 经营看板</h2>
+          <p id="wbBusinessTitle">按当前日期和近 30 天趋势汇总 WB 本土店经营表现</p>
+        </div>
+        <div class="trend-legend">
+          <span><i class="sales-dot"></i>销量</span>
+          <span><i class="ad-dot"></i>销售额</span>
+        </div>
+      </div>
+      <div id="wbBusinessStats" class="business-stats"></div>
+      <div class="business-grid">
+        <div id="wbBusinessRevenueChart" class="trend-chart">
+          <div class="trend-empty">暂无销售额数据</div>
+        </div>
+        <div id="wbBusinessTopProducts" class="trend-chart">
+          <div class="trend-empty">暂无商品排行数据</div>
+        </div>
+      </div>
+    </section>
   </div>
 
   <div class="toast" id="toast" hidden></div>
@@ -120,6 +147,6 @@
     </form>
   </dialog>
 
-  <script src="./wb.js?v=20260722-staged-sync"></script>
+  <script src="./wb.js?v=20260724-wb-subnav-business-2"></script>
 </body>
 </html>

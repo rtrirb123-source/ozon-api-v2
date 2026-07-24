@@ -7,6 +7,7 @@ const state = {
   selectedNmId: "",
   search: "",
   salesSort: "desc",
+  activeView: "products",
   metricDate: defaultMetricDate(),
   timers: new Map(),
   statuses: new Map(),
@@ -397,11 +398,199 @@ function renderRevenueTrend() {
       `).join("")}
     </svg>
   `;
+  renderBusinessBoard();
 }
 
 function render() {
   renderStats();
   renderTable();
+  renderBusinessBoard();
+  applyWbSubView();
+}
+
+function ensureWbSubnav() {
+  const tabs = document.querySelector(".market-tabs");
+  if (!tabs) return;
+  let nav = document.querySelector(".wb-subnav");
+  if (!nav) {
+    nav = document.createElement("div");
+    nav.className = "portal-subnav wb-subnav";
+    nav.setAttribute("role", "tablist");
+    nav.setAttribute("aria-label", "WB 本土看板子项");
+    nav.innerHTML = `
+      <button class="active" type="button" data-wb-view="products">商品看板</button>
+      <button type="button" data-wb-view="business">经营看板</button>
+    `;
+  }
+  if (tabs.nextElementSibling !== nav) tabs.insertAdjacentElement("afterend", nav);
+  nav.querySelectorAll("[data-wb-view]").forEach(button => {
+    if (button.dataset.bound === "1") return;
+    button.dataset.bound = "1";
+    button.addEventListener("click", () => setWbSubView(button.dataset.wbView));
+  });
+}
+
+function applyWbSubView() {
+  ensureWbSubnav();
+  const view = state.activeView || "products";
+  document.querySelectorAll("[data-wb-subview]").forEach(node => {
+    node.hidden = node.dataset.wbSubview !== view;
+  });
+  document.querySelectorAll("[data-wb-view]").forEach(button => {
+    const active = button.dataset.wbView === view;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-selected", active ? "true" : "false");
+  });
+}
+
+function setWbSubView(view) {
+  state.activeView = view === "business" ? "business" : "products";
+  applyWbSubView();
+  if (state.activeView === "business") renderBusinessBoard();
+}
+
+function formatCompact(value) {
+  return new Intl.NumberFormat("ru-RU", { notation: "compact", maximumFractionDigits: 1 }).format(toNumber(value));
+}
+
+function sumProducts(field) {
+  return (state.products || []).reduce((sum, item) => sum + toNumber(item[field]), 0);
+}
+
+function recentStoreTotals() {
+  const rows = (state.storeMetrics || []).slice(-30);
+  return rows.reduce((acc, row) => {
+    acc.revenue += toNumber(row.revenue);
+    acc.sales += toNumber(row.sales_units || row.sales || row.orders || 0);
+    return acc;
+  }, { revenue: 0, sales: 0 });
+}
+
+function renderBusinessStat(label, value, note) {
+  return `
+    <div class="business-stat">
+      <span>${escapeHtml(label)}</span>
+      <strong>${escapeHtml(value)}</strong>
+      <small>${escapeHtml(note || "")}</small>
+    </div>
+  `;
+}
+
+function renderBusinessRevenueChart() {
+  const node = $("wbBusinessRevenueChart");
+  if (!node) return;
+
+  const rows = (state.storeMetrics || []).slice(-30);
+  if (!rows.length) {
+    node.innerHTML = '<div class="trend-empty">暂无近 30 天销售额数据</div>';
+    return;
+  }
+
+  const points = rows.map((item, index) => ({
+    index,
+    date: String(item.metric_date || item.date || "").slice(5, 10),
+    revenue: toNumber(item.revenue),
+    sales: toNumber(item.sales_units || item.sales || item.orders || 0)
+  }));
+  const width = 760;
+  const height = 250;
+  const pad = { left: 48, right: 24, top: 20, bottom: 34 };
+  const innerWidth = width - pad.left - pad.right;
+  const innerHeight = height - pad.top - pad.bottom;
+  const maxRevenue = Math.max(1, ...points.map(point => point.revenue));
+  const maxSales = Math.max(1, ...points.map(point => point.sales));
+  const x = index => pad.left + (points.length <= 1 ? innerWidth : index * innerWidth / (points.length - 1));
+  const yRevenue = value => pad.top + innerHeight - value / maxRevenue * innerHeight;
+  const ySales = value => pad.top + innerHeight - value / maxSales * innerHeight;
+  const revenueLine = points.map(point => `${x(point.index)},${yRevenue(point.revenue)}`).join(" ");
+  const salesLine = points.map(point => `${x(point.index)},${ySales(point.sales)}`).join(" ");
+  const grid = [0, 0.25, 0.5, 0.75, 1].map(rate => {
+    const y = pad.top + innerHeight - innerHeight * rate;
+    return `<line class="grid-line" x1="${pad.left}" x2="${width - pad.right}" y1="${y}" y2="${y}"></line>`;
+  }).join("");
+  const labels = points
+    .filter((_, index) => index === 0 || index === points.length - 1 || index % 7 === 0)
+    .map(point => `<text class="axis-label" x="${x(point.index)}" y="${height - 10}" text-anchor="middle">${escapeHtml(point.date)}</text>`)
+    .join("");
+
+  node.innerHTML = `
+    <div class="chart-title">WB 本土近 30 天经营趋势</div>
+    <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="WB 本土近 30 天销售额和销量趋势">
+      ${grid}
+      <line class="axis" x1="${pad.left}" x2="${pad.left}" y1="${pad.top}" y2="${height - pad.bottom}"></line>
+      <line class="axis" x1="${pad.left}" x2="${width - pad.right}" y1="${height - pad.bottom}" y2="${height - pad.bottom}"></line>
+      <text class="axis-label" x="${pad.left}" y="14">₽ ${formatCompact(maxRevenue)}</text>
+      <text class="axis-label ad-axis-label" x="${width - pad.right}" y="14" text-anchor="end">${formatCompact(maxSales)} 件</text>
+      <polyline class="revenue-line" fill="none" points="${revenueLine}"></polyline>
+      <polyline class="sales-line" fill="none" points="${salesLine}"></polyline>
+      ${points.map(point => `<circle class="revenue-point" cx="${x(point.index)}" cy="${yRevenue(point.revenue)}" r="3"></circle>`).join("")}
+      ${points.map(point => `<circle class="sales-point" cx="${x(point.index)}" cy="${ySales(point.sales)}" r="3"></circle>`).join("")}
+      ${labels}
+    </svg>
+  `;
+}
+
+function renderBusinessTopProducts() {
+  const node = $("wbBusinessTopProducts");
+  if (!node) return;
+  const rows = [...(state.products || [])]
+    .sort((a, b) => toNumber(b.selected_revenue || b.revenue || 0) - toNumber(a.selected_revenue || a.revenue || 0))
+    .slice(0, 8);
+  if (!rows.length) {
+    node.innerHTML = '<div class="trend-empty">暂无商品排行数据</div>';
+    return;
+  }
+
+  const maxRevenue = Math.max(1, ...rows.map(item => toNumber(item.selected_revenue || item.revenue || 0)));
+  node.innerHTML = `
+    <div class="chart-title">当前日期销售额 Top 8</div>
+    <div class="business-ranking">
+      ${rows.map((item, index) => {
+        const revenue = toNumber(item.selected_revenue || item.revenue || 0);
+        const sales = toNumber(item.selected_sales ?? item.yesterday_sales ?? 0);
+        const width = Math.max(4, revenue / maxRevenue * 100);
+        return `
+          <div class="business-rank-row">
+            <span class="rank-index">${index + 1}</span>
+            <div class="rank-main">
+              <div class="rank-title">${escapeHtml(item.vendor_code || item.title || item.nm_id)}</div>
+              <div class="rank-bar"><i style="width:${width}%"></i></div>
+            </div>
+            <div class="rank-value">
+              <strong>${formatMoney(revenue)}</strong>
+              <small>${sales} 件</small>
+            </div>
+          </div>
+        `;
+      }).join("")}
+    </div>
+  `;
+}
+
+function renderBusinessBoard() {
+  const stats = $("wbBusinessStats");
+  if (!stats) return;
+
+  const summary = state.summary || {};
+  const selectedSales = toNumber(summary.totalSales || summary.totalYesterdaySales || sumProducts("selected_sales") || sumProducts("yesterday_sales"));
+  const selectedRevenue = toNumber(summary.totalRevenue || sumProducts("selected_revenue"));
+  const totalStock = toNumber(summary.totalStock || sumProducts("stock"));
+  const recent = recentStoreTotals();
+  const avgPrice = selectedSales ? selectedRevenue / selectedSales : 0;
+  const activeProducts = (state.products || []).filter(item => toNumber(item.selected_sales ?? item.yesterday_sales ?? 0) > 0).length;
+  const title = $("wbBusinessTitle");
+  if (title) title.textContent = `当前日期：${summary.selectedDate || state.metricDate || "-"}；近 30 天趋势来自 WB 本土店铺数据`;
+
+  stats.innerHTML = [
+    renderBusinessStat("当前销量", `${selectedSales.toLocaleString("ru-RU")} 件`, "按当前选择日期"),
+    renderBusinessStat("当前销售额", formatMoney(selectedRevenue), "按当前选择日期"),
+    renderBusinessStat("近30天销售额", formatMoney(recent.revenue), "店铺趋势汇总"),
+    renderBusinessStat("均价", formatMoney(avgPrice), "当前销售额 / 当前销量"),
+    renderBusinessStat("有销量商品", `${activeProducts} 个`, "当前日期"),
+    renderBusinessStat("总库存", `${totalStock.toLocaleString("ru-RU")} 件`, "WB 本土库存")
+  ].join("");
+  renderBusinessRevenueChart();
+  renderBusinessTopProducts();
 }
 
 function updateRowProfit(nmId) {
@@ -590,6 +779,8 @@ $("salesSort").addEventListener("change", event => {
   state.salesSort = event.target.value;
   renderTable();
 });
+
+ensureWbSubnav();
 
 if ($("metricDateInput")) {
   $("metricDateInput").value = state.metricDate;
