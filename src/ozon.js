@@ -1156,6 +1156,7 @@ function sumMetricRows(rows) {
 
 const fboReplenishmentCache = new Map();
 const fboReplenishmentRefreshes = new Set();
+const fboReplenishmentRefreshStatus = new Map();
 const FBO_REPLENISHMENT_CACHE_FILE = path.join(__dirname, "..", "data", "fbo-replenishment-cache.json");
 const FBO_REPLENISHMENT_CACHE_MS = 6 * 60 * 60 * 1000;
 
@@ -1173,13 +1174,68 @@ function fboReplenishmentCacheKey({ days, targetDays, offers }) {
 }
 
 function cachedPayload(entry) {
-  const ageSeconds = Math.round((Date.now() - Number(entry.saved_at || 0)) / 1000);
+  const savedAt = Number(entry.saved_at || 0);
+  const ageSeconds = Math.round((Date.now() - savedAt) / 1000);
   const stale = ageSeconds * 1000 >= FBO_REPLENISHMENT_CACHE_MS;
   return {
     ...entry.data,
     cached: true,
     cache_stale: stale,
-    cache_age_seconds: ageSeconds
+    cache_age_seconds: ageSeconds,
+    cache_saved_at: savedAt ? new Date(savedAt).toISOString() : ""
+  };
+}
+
+function startFboReplenishmentRefresh(cacheKey, params = {}) {
+  if (fboReplenishmentRefreshes.has(cacheKey)) {
+    return fboReplenishmentRefreshStatus.get(cacheKey) || { running: true };
+  }
+
+  const startedAt = new Date().toISOString();
+  const status = {
+    running: true,
+    startedAt,
+    finishedAt: "",
+    lastOkAt: "",
+    lastError: "",
+    cacheKey
+  };
+  fboReplenishmentRefreshes.add(cacheKey);
+  fboReplenishmentRefreshStatus.set(cacheKey, status);
+
+  listFboClusterReplenishment({ ...params, refresh: true, compact: false, background: true, force: true })
+    .then((result) => {
+      status.lastOkAt = new Date().toISOString();
+      status.since = result?.since || "";
+      status.to = result?.to || "";
+      status.count = result?.count || 0;
+    })
+    .catch((error) => {
+      status.lastError = error && error.message ? error.message : String(error);
+      console.warn("[fbo-replenishment-refresh]", status.lastError);
+    })
+    .finally(() => {
+      status.running = false;
+      status.finishedAt = new Date().toISOString();
+      fboReplenishmentRefreshes.delete(cacheKey);
+    });
+
+  return status;
+}
+
+function getFboReplenishmentRefreshStatus({ days = 30, targetDays = 30, offers = "" } = {}) {
+  const safeDays = Math.min(Math.max(Number(days) || 30, 1), 60);
+  const safeTargetDays = Math.min(Math.max(Number(targetDays) || 30, 7), 90);
+  const cacheKey = fboReplenishmentCacheKey({ days: safeDays, targetDays: safeTargetDays, offers });
+  const cached = readFboReplenishmentCache(cacheKey, { allowStale: true });
+  return {
+    running: fboReplenishmentRefreshes.has(cacheKey),
+    ...(fboReplenishmentRefreshStatus.get(cacheKey) || {}),
+    cached: Boolean(cached),
+    cache_saved_at: cached?.cache_saved_at || "",
+    cache_since: cached?.since || "",
+    cache_to: cached?.to || "",
+    cache_age_seconds: cached?.cache_age_seconds ?? null
   };
 }
 
@@ -1248,22 +1304,26 @@ function compactFboReplenishmentData(data) {
   };
 }
 
-async function listFboClusterReplenishment({ days = 30, targetDays = 30, offers = "", refresh = false, compact = false, background = false } = {}) {
+async function listFboClusterReplenishment({ days = 30, targetDays = 30, offers = "", refresh = false, compact = false, background = false, force = false } = {}) {
   const safeDays = Math.min(Math.max(Number(days) || 30, 1), 60);
   const safeTargetDays = Math.min(Math.max(Number(targetDays) || 30, 7), 90);
   const cacheKey = fboReplenishmentCacheKey({ days: safeDays, targetDays: safeTargetDays, offers });
   const cached = readFboReplenishmentCache(cacheKey, { allowStale: true });
   if (refresh && cached && !background) {
-    if (!fboReplenishmentRefreshes.has(cacheKey)) {
-      fboReplenishmentRefreshes.add(cacheKey);
-      listFboClusterReplenishment({ days: safeDays, targetDays: safeTargetDays, offers, refresh: true, compact: false, background: true })
-        .catch((error) => console.warn("[fbo-replenishment-refresh]", error.message))
-        .finally(() => fboReplenishmentRefreshes.delete(cacheKey));
-    }
-    const response = { ...cached, refresh_started: true };
+    const refreshStatus = startFboReplenishmentRefresh(cacheKey, {
+      days: safeDays,
+      targetDays: safeTargetDays,
+      offers
+    });
+    const response = {
+      ...cached,
+      refresh_started: true,
+      refresh_status: refreshStatus,
+      force_refresh: Boolean(force)
+    };
     return compact ? compactFboReplenishmentData(response) : response;
   }
-  if (!refresh && cached) return compact ? compactFboReplenishmentData(cached) : cached;
+  if (!refresh && cached && !force) return compact ? compactFboReplenishmentData(cached) : cached;
 
   const wantedOffers = new Set(
     String(offers || "")
@@ -1425,6 +1485,7 @@ module.exports = {
   buildOzonProductUpdatePreview,
   getOzonProductCard,
   listFinanceTransactions,
+  getFboReplenishmentRefreshStatus,
   listFboClusterReplenishment,
   previewOzonAnalytics,
   submitOzonProductUpdate,

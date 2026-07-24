@@ -538,6 +538,18 @@ async function route(req, res) {
     return;
   }
 
+  if (req.method === "GET" && path === "/api/ozon/replenishment/fbo-clusters/status") {
+    sendJson(req, res, 200, {
+      ok: true,
+      data: ozon.getFboReplenishmentRefreshStatus({
+        days: url.searchParams.get("days") || 30,
+        targetDays: url.searchParams.get("target_days") || 30,
+        offers: url.searchParams.get("offers") || ""
+      })
+    });
+    return;
+  }
+
   if (req.method === "GET" && path === "/api/ozon/replenishment/fbo-clusters") {
     sendJson(req, res, 200, {
       ok: true,
@@ -546,7 +558,8 @@ async function route(req, res) {
         targetDays: url.searchParams.get("target_days") || 30,
         offers: url.searchParams.get("offers") || "",
         refresh: url.searchParams.get("refresh") === "1",
-        compact: url.searchParams.get("compact") === "1"
+        compact: url.searchParams.get("compact") === "1",
+        force: url.searchParams.get("force") === "1"
       })
     });
     return;
