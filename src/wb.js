@@ -318,6 +318,37 @@ async function defaultMetricDate() {
   return result.rows[0]?.metric_date || new Date(Date.now() - 86400000).toISOString().slice(0, 10);
 }
 
+async function resolveMetricDate(requestedDate) {
+  const result = await query(
+    `WITH selected AS (
+       SELECT $1::date AS requested_date
+     ),
+     exact_day AS (
+       SELECT m.metric_date::date AS metric_date
+       FROM wb_daily_metrics m, selected
+       WHERE m.metric_date = selected.requested_date
+       GROUP BY m.metric_date
+       HAVING COALESCE(SUM(m.sales_units), 0) > 0 OR COALESCE(SUM(m.revenue), 0) > 0
+     ),
+     recent_day AS (
+       SELECT m.metric_date::date AS metric_date
+       FROM wb_daily_metrics m, selected
+       WHERE m.metric_date <= selected.requested_date
+         AND m.metric_date >= selected.requested_date - interval '60 days'
+       GROUP BY m.metric_date
+       HAVING COALESCE(SUM(m.sales_units), 0) > 0 OR COALESCE(SUM(m.revenue), 0) > 0
+       ORDER BY m.metric_date DESC
+       LIMIT 1
+     )
+     SELECT
+       to_char(selected.requested_date, 'YYYY-MM-DD') AS requested_date,
+       to_char(COALESCE((SELECT metric_date FROM exact_day), (SELECT metric_date FROM recent_day), selected.requested_date), 'YYYY-MM-DD') AS metric_date
+     FROM selected`,
+    [requestedDate]
+  );
+  return result.rows[0] || { requested_date: requestedDate, metric_date: requestedDate };
+}
+
 function productSelect() {
   return `id, nm_id, vendor_code, title, brand, subject_name, image_url, stock, fbs_stock, fbw_stock,
     yesterday_sales, commission_rate, purchase_cost, shipping_cost, weight, freight_rate, return_rate, price, ad_ratio, competitor_compare,
@@ -326,7 +357,9 @@ function productSelect() {
 
 async function dashboard({ date = "" } = {}) {
   await refreshYesterdaySalesFromMetrics();
-  const selectedDate = normalizeMetricDateInput(date) || await defaultMetricDate();
+  const requestedDate = normalizeMetricDateInput(date) || await defaultMetricDate();
+  const resolvedDate = await resolveMetricDate(requestedDate);
+  const selectedDate = resolvedDate.metric_date || requestedDate;
   const result = await query(`SELECT ${productSelect()} FROM wb_products ORDER BY yesterday_sales DESC NULLS LAST, updated_at DESC`);
   const products = result.rows;
   const metrics = await query(
@@ -350,11 +383,13 @@ async function dashboard({ date = "" } = {}) {
       totalYesterdaySales: products.reduce((s, x) => s + Number(x.yesterday_sales || 0), 0),
       totalSales: products.reduce((s, x) => s + Number(x.selected_sales || 0), 0),
       totalRevenue: products.reduce((s, x) => s + Number(x.selected_revenue || 0), 0),
-      selectedDate
+      selectedDate,
+      requestedDate,
+      dateFallback: selectedDate !== requestedDate
     },
     products,
     fetchedAt: new Date().toISOString(),
-    source: { provider: "wildberries", selectedDate }
+    source: { provider: "wildberries", selectedDate, requestedDate, dateFallback: selectedDate !== requestedDate }
   };
 }
 
