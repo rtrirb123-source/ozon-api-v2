@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Ozon 经营看板</title>
+    <link rel="stylesheet" href="./russia-operations.css?v=20260724-22" />
+    <link rel="stylesheet" href="/auth-shared.css?v=20260724-2" />
+    <script src="/auth-guard.js?v=20260724-2"></script>
+  </head>
+  <body>
+    <div class="app">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">OZON · RUSSIA OPERATIONS</p>
+          <h1>Ozon 经营看板</h1>
+          <p id="syncText">正在加载商品经济数据…</p>
+        </div>
+        <div class="actions">
+          <input id="searchInput" type="search" placeholder="搜索 SKU / 货号" />
+          <button id="exportBtn" type="button">导出当前视图</button>
+        </div>
+      </header>
+
+      <section class="hero">
+        <div class="month-navigation">
+          <span class="status-dot"></span>
+          <button id="prevMonthBtn" class="month-arrow" type="button" aria-label="上月">‹</button>
+          <select id="monthSelect" aria-label="选择月份"></select>
+          <button id="nextMonthBtn" class="month-arrow" type="button" aria-label="下月">›</button>
+          <span class="muted">俄罗斯站 · RUB</span>
+        </div>
+        <div class="legend">
+          <span><i class="legend-sales"></i>销售</span>
+          <span><i class="legend-cost"></i>平台及履约费用</span>
+          <span><i class="legend-ad"></i>推广广告</span>
+        </div>
+      </section>
+
+      <section id="kpiGrid" class="kpi-grid"></section>
+
+      <section class="insight-grid">
+        <article class="panel">
+          <div class="panel-head">
+            <div>
+              <span class="panel-kicker">COST STRUCTURE</span>
+              <h2>费用结构</h2>
+            </div>
+            <span class="panel-note">按绝对金额</span>
+          </div>
+          <div id="costBars" class="cost-bars"></div>
+        </article>
+        <article class="panel">
+          <div class="panel-head">
+            <div>
+              <span class="panel-kicker">TOP PRODUCTS</span>
+              <h2>销售贡献 TOP 8</h2>
+            </div>
+            <span class="panel-note">按毛利润</span>
+          </div>
+          <div id="topProducts" class="top-products"></div>
+        </article>
+      </section>
+
+      <section class="table-panel">
+        <div class="table-title">
+          <div>
+            <span class="panel-kicker">UNIT ECONOMICS</span>
+            <h2>商品经济明细</h2>
+          </div>
+          <div class="economics-controls">
+            <div class="operator-switch" aria-label="运营人员筛选">
+              <span>运营人员</span>
+              <button type="button" class="operator-filter active" data-operator="">全部</button>
+              <button type="button" class="operator-filter" data-operator="梦婷">梦婷</button>
+              <button type="button" class="operator-filter" data-operator="云湖">云湖</button>
+            </div>
+            <label>税费系数
+              <span class="input-unit"><input id="taxRateInput" type="number" min="0" step="0.1" value="12" /> %</span>
+            </label>
+            <label>提现手续费
+              <span class="input-unit"><input id="withdrawalRateInput" type="number" min="0" step="0.1" value="3" /> %</span>
+            </label>
+            <label>卢布兑人民币汇率
+              <input id="rubRateInput" type="number" min="0" step="0.0001" />
+            </label>
+            <label>物流系数
+              <span class="input-unit"><input id="logisticsFactorInput" type="number" min="0" step="0.1" value="3" /> 美元/kg</span>
+            </label>
+            <span id="rateSource" class="rate-source"></span>
+            <span id="rowCount" class="row-count"></span>
+          </div>
+        </div>
+        <div class="table-shell">
+          <table>
+            <thead>
+              <tr class="group-row">
+                <th colspan="4">商品信息 <span>◀▶</span></th>
+                <th colspan="8">基础指标 <span>◀▶</span><strong id="selectedProfitTotal" class="group-profit"></strong></th>
+                <th colspan="4">销售 <span>◀▶</span></th>
+                <th>Ozon平台佣金 <span>◀▶</span></th>
+                <th>收单手续费 <span>◀▶</span></th>
+                <th colspan="5">配送和存储 <span>◀▶</span></th>
+                <th colspan="3">退货 <span>◀▶</span></th>
+                <th colspan="4">附加服务 <span>◀▶</span></th>
+                <th colspan="6">推广和广告 <span>◀▶</span></th>
+              </tr>
+              <tr class="column-row">
+                <th>运营</th><th>商品图片</th><th>SKU</th><th>货号</th>
+                <th>采购成本（人民币）</th><th>已交付数量</th><th>头程费用（人民币）</th><th>到俄总成本（人民币）</th><th>税后总销售额（卢布）</th><th>销售总费用（卢布）</th><th>毛利润（人民币）</th><th>单品利润（人民币）</th>
+                <th>销售总额</th><th>营业收入</th><th>折扣积分</th><th>合作伙伴计划</th>
+                <th>佣金金额</th><th>手续费金额</th>
+                <th>货件处理</th><th>物流</th><th>配送至取货点</th><th>存储费用</th><th class="group-total-head">汇总</th>
+                <th>退货处理</th><th>逆向物流</th><th class="group-total-head">汇总</th>
+                <th>销毁</th><th>体积和重量特征额外处理</th><th>操作错误</th><th class="group-total-head">汇总</th>
+                <th>按点击付费</th><th>按订单付费</th><th>明星商品</th><th>品牌推广</th><th>评价管理</th><th class="group-total-head">汇总</th>
+              </tr>
+            </thead>
+            <tbody id="productBody"></tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+    <div id="toast" class="toast" hidden></div>
+    <script src="./russia-operations.js?v=20260724-group-totals"></script>
+  </body>
+</html>

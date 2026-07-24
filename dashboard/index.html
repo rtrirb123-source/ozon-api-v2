@@ -3,29 +3,39 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Ozon 看板</title>
-    <link rel="stylesheet" href="./styles.css?v=20260529-5" />
-  </head>
+    <title>俄罗斯</title>
+    <link rel="stylesheet" href="./styles.css?v=20260724-tail-rate" />
+    <link rel="stylesheet" href="/auth-shared.css?v=20260724-2">
+  <script src="/auth-guard.js?v=20260724-2"></script>
+</head>
   <body>
     <div class="app">
       <header class="topbar">
         <div>
-          <h1>Ozon 看板</h1>
+          <h1>俄罗斯</h1>
           <p id="syncText">正在加载数据...</p>
         </div>
         <div class="actions">
           <input id="searchInput" type="search" placeholder="搜索 offer_id / product_id / 竞品" />
+          <input id="metricDateInput" type="date" />
           <select id="salesSort">
             <option value="desc">当日销量 高到低</option>
             <option value="asc">当日销量 低到高</option>
             <option value="none">默认排序</option>
           </select>
+          <label class="hidden-toggle"><input id="showHiddenInput" type="checkbox" />显示隐藏商品</label>
           <button id="refreshBtn" type="button">刷新</button>
           <button id="addBtn" type="button">新增商品</button>
         </div>
       </header>
 
-      <section class="trend-panel">
+      <div class="market-tabs">
+        <button class="market-tab active" type="button">俄罗斯</button>
+        <button class="market-tab" type="button" data-market-tab="wb">WB 本土看板</button>
+        <button class="market-tab" type="button" data-market-tab="wb-cross">WB 跨境店</button>
+      </div>
+      <nav class="portal-subnav" aria-label="俄罗斯子看板"><a class="active" href="/index.html">Ozon 本土看板</a><a href="/russia-operations.html">Ozon 经营看板</a><a href="/replenishment.html">补库存</a></nav>
+<section class="trend-panel">
         <div class="trend-head">
           <div>
             <h2>销量动态</h2>
@@ -36,8 +46,13 @@
             <span><i class="ad-dot"></i>广告比例</span>
           </div>
         </div>
-        <div id="trendChart" class="trend-chart">
-          <div class="trend-empty">暂无动态数据</div>
+        <div class="trend-grid">
+          <div id="trendChart" class="trend-chart">
+            <div class="trend-empty">暂无动态数据</div>
+          </div>
+          <div id="storeRevenueChart" class="trend-chart revenue-trend-chart">
+            <div class="trend-empty">暂无销售额数据</div>
+          </div>
         </div>
       </section>
 
@@ -76,6 +91,6 @@
       </form>
     </dialog>
 
-    <script src="./app.js?v=20260529-5"></script>
+    <script src="./app.js?v=20260724-overview-fix"></script>
   </body>
 </html>

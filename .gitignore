@@ -1,3 +1,12 @@
 node_modules/
 .env
 *.log
+.env.*
+backups/
+data/
+*.bak*
+__pycache__/
+*.pyc
+dashboard/russia-unit-economics-*.json
+dashboard/russia-unit-economics-months.json
+seed_fbo_cache.js

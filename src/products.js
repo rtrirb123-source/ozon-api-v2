@@ -20,10 +20,13 @@ const PUBLIC_FIELDS = [
   "purchase_cost",
   "weight",
   "freight_rate",
+  "tail_delivery_rate",
   "return_rate",
   "ad_ratio",
   "price",
-  "competitor_compare"
+  "competitor_compare",
+  "operator_name",
+  "hidden"
 ];
 
 const ALIASES = {
@@ -60,6 +63,8 @@ const ALIASES = {
   purchase_cost: "purchase_cost",
   freightRate: "freight_rate",
   freight_rate: "freight_rate",
+  tailDeliveryRate: "tail_delivery_rate",
+  tail_delivery_rate: "tail_delivery_rate",
   returnRate: "return_rate",
   return_rate: "return_rate",
   adRatio: "ad_ratio",
@@ -68,6 +73,12 @@ const ALIASES = {
   sellingPrice: "price",
   competitorCompare: "competitor_compare",
   competitor_compare: "competitor_compare",
+  operator: "operator_name",
+  operatorName: "operator_name",
+  operator_name: "operator_name",
+  hidden: "hidden",
+  is_hidden: "hidden",
+  isHidden: "hidden",
   "\u5546\u54c1\u56fe\u7247": "image_url",
   "\u56fe\u7247": "image_url",
   "\u4e3b\u56fe": "image_url",
@@ -80,6 +91,7 @@ const ALIASES = {
   "\u91c7\u8d2d\u4ef7": "purchase_cost",
   "\u91cd\u91cf": "weight",
   "\u8fd0\u8d39\u7cfb\u6570": "freight_rate",
+  "\u5c3e\u7a0b\u6d3e\u9001\u7cfb\u6570": "tail_delivery_rate",
   "\u9000\u8d27\u7387": "return_rate",
   "\u5e7f\u544a\u6bd4\u4f8b": "ad_ratio",
   "\u552e\u4ef7": "price",
@@ -87,6 +99,8 @@ const ALIASES = {
   "\u7ade\u54c1\u5bf9\u6bd4": "competitor_compare",
   "\u7ade\u54c1\u4fe1\u606f": "competitor_compare",
   "\u4ea7\u54c1\u7b56\u7565": "strategy",
+  "\u8fd0\u8425": "operator_name",
+  "\u8d1f\u8d23\u4eba": "operator_name",
   "\u6807\u9898": "title"
 };
 
@@ -98,6 +112,7 @@ const NUMERIC_FIELDS = new Set([
   "purchase_cost",
   "weight",
   "freight_rate",
+  "tail_delivery_rate",
   "return_rate",
   "ad_ratio",
   "price"
@@ -115,9 +130,24 @@ function normalizeInput(payload) {
   for (const [key, value] of Object.entries(payload || {})) {
     const normalizedKey = ALIASES[key] || key;
     if (!PUBLIC_FIELDS.includes(normalizedKey)) continue;
+    if (normalizedKey === "hidden") {
+      out[normalizedKey] = value === true || value === "true" || value === 1 || value === "1";
+      continue;
+    }
     out[normalizedKey] = NUMERIC_FIELDS.has(normalizedKey) ? normalizeNumeric(value) : value ?? "";
   }
   return out;
+}
+
+function normalizeMetricDateInput(value) {
+  if (typeof value !== "string") return "";
+  const trimmed = value.trim();
+  return /^\d{4}-\d{2}-\d{2}$/.test(trimmed) ? trimmed : "";
+}
+
+async function defaultMetricDate() {
+  const result = await query("SELECT ((NOW() AT TIME ZONE 'Asia/Shanghai')::date - 1)::text AS metric_date");
+  return result.rows[0]?.metric_date || new Date(Date.now() - 86400000).toISOString().slice(0, 10);
 }
 
 function productSelect() {
@@ -140,37 +170,103 @@ function productSelect() {
     purchase_cost,
     weight,
     freight_rate,
+    tail_delivery_rate,
     return_rate,
     ad_ratio,
     price,
     competitor_compare,
+    operator_name,
+    COALESCE(hidden, false) AS hidden,
     created_at,
     updated_at
   `;
 }
 
-async function listProducts({ search = "", limit = 500, offset = 0 } = {}) {
+
+async function ensureProductHiddenSchema() {
+  if (process.env.MEMORY_STORE === "true") return;
+  await query("ALTER TABLE products ADD COLUMN IF NOT EXISTS hidden BOOLEAN NOT NULL DEFAULT false");
+}
+
+async function ensureStrategyHistorySchema() {
+  if (process.env.MEMORY_STORE === "true") return;
+  await query(`
+    CREATE TABLE IF NOT EXISTS product_strategy_history (
+      id BIGSERIAL PRIMARY KEY,
+      offer_id TEXT NOT NULL REFERENCES products (offer_id) ON DELETE CASCADE,
+      strategy TEXT,
+      saved_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await query(`
+    CREATE INDEX IF NOT EXISTS product_strategy_history_offer_saved_idx
+    ON product_strategy_history (offer_id, saved_at DESC)
+  `);
+}
+
+async function recordStrategyHistory(offerId, strategy) {
+  if (process.env.MEMORY_STORE === "true") return;
+  await ensureStrategyHistorySchema();
+  await query(
+    `INSERT INTO product_strategy_history (offer_id, strategy, saved_at)
+     VALUES ($1, $2, NOW())`,
+    [offerId, strategy ?? ""]
+  );
+}
+
+async function listStrategyHistory(offerId, { days = 3 } = {}) {
+  const safeDays = Math.min(Math.max(Number(days) || 3, 1), 30);
+  if (process.env.MEMORY_STORE === "true") return [];
+  await ensureStrategyHistorySchema();
+
+  const result = await query(
+    `
+      SELECT saved_date, strategy, saved_at
+      FROM (
+        SELECT DISTINCT ON ((saved_at AT TIME ZONE 'Asia/Shanghai')::date)
+          (saved_at AT TIME ZONE 'Asia/Shanghai')::date::text AS saved_date,
+          strategy,
+          saved_at,
+          id
+        FROM product_strategy_history
+        WHERE offer_id = $1
+        ORDER BY (saved_at AT TIME ZONE 'Asia/Shanghai')::date DESC, saved_at DESC, id DESC
+      ) latest_per_day
+      ORDER BY saved_date DESC, saved_at DESC, id DESC
+      LIMIT $2
+    `,
+    [offerId, safeDays]
+  );
+  return result.rows;
+}
+
+async function listProducts({ search = "", limit = 500, offset = 0, showHidden = false } = {}) {
+  const includeHidden = showHidden === true || showHidden === "true" || showHidden === "1" || showHidden === 1;
   if (process.env.MEMORY_STORE === "true") {
-    const all = Array.from(memoryProducts.values());
+    const all = Array.from(memoryProducts.values()).filter((item) => includeHidden || !item.hidden);
     const filtered = search
       ? all.filter((item) => [item.offer_id, item.product_id, item.title].some((value) => String(value || "").toLowerCase().includes(String(search).toLowerCase())))
       : all;
     return filtered.slice(Number(offset) || 0, (Number(offset) || 0) + (Number(limit) || 500));
   }
 
+  await ensureProductHiddenSchema();
   const cappedLimit = Math.min(Math.max(Number(limit) || 500, 1), 1000);
   const safeOffset = Math.max(Number(offset) || 0, 0);
   const params = [];
-  let where = "";
+  const conditions = [];
+
+  if (!includeHidden) conditions.push("COALESCE(hidden, false) = false");
 
   if (search) {
     params.push(`%${search}%`);
-    where = `WHERE offer_id ILIKE $1 OR product_id ILIKE $1 OR title ILIKE $1`;
+    conditions.push(`(offer_id ILIKE $${params.length} OR product_id ILIKE $${params.length} OR title ILIKE $${params.length})`);
   }
 
   params.push(cappedLimit, safeOffset);
   const limitParam = params.length - 1;
   const offsetParam = params.length;
+  const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
 
   const result = await query(
     `SELECT ${productSelect()}
@@ -188,6 +284,7 @@ async function getProduct(offerId) {
     return memoryProducts.get(offerId) || null;
   }
 
+  await ensureProductHiddenSchema();
   const result = await query(`SELECT ${productSelect()} FROM products WHERE offer_id = $1`, [offerId]);
   return result.rows[0] || null;
 }
@@ -214,6 +311,7 @@ async function createProduct(payload) {
     return product;
   }
 
+  await ensureProductHiddenSchema();
   const fields = Object.keys(data);
   const params = fields.map((field) => data[field]);
   const placeholders = fields.map((_, index) => `$${index + 1}`);
@@ -286,6 +384,8 @@ async function updateProduct(offerId, payload) {
     return existing;
   }
 
+  await ensureProductHiddenSchema();
+  await ensureProductHiddenSchema();
   const fields = Object.keys(data);
   const params = fields.map((field) => data[field]);
   params.push(offerId);
@@ -304,6 +404,9 @@ async function updateProduct(offerId, payload) {
     error.statusCode = 404;
     throw error;
   }
+  if (Object.prototype.hasOwnProperty.call(data, "strategy")) {
+    await recordStrategyHistory(offerId, result.rows[0].strategy);
+  }
   return result.rows[0];
 }
 
@@ -316,12 +419,38 @@ async function deleteProduct(offerId) {
   return Boolean(result.rows[0]);
 }
 
-async function dashboard() {
-  const products = await listProducts({ limit: 1000 });
+async function dashboard({ date = "", showHidden = false } = {}) {
+  const selectedDate = normalizeMetricDateInput(date) || await defaultMetricDate();
+  const products = await listProducts({ limit: 1000, showHidden });
+
+  if (process.env.MEMORY_STORE !== "true" && products.length) {
+    const metrics = await query(
+      `SELECT
+         offer_id,
+         COALESCE(sales_units, 0) AS sales_units,
+         COALESCE(revenue, 0) AS revenue
+       FROM product_daily_metrics
+       WHERE metric_date = $1::date`,
+      [selectedDate]
+    );
+    const byOffer = new Map(metrics.rows.map((row) => [row.offer_id, row]));
+    for (const product of products) {
+      const metric = byOffer.get(product.offer_id);
+      product.selected_sales = Number(metric?.sales_units || 0);
+      product.selected_revenue = Number(metric?.revenue || 0);
+      product.metric_date = selectedDate;
+      product.yesterday_sales = product.selected_sales;
+    }
+  }
+
   const summary = products.reduce(
     (acc, product) => {
+      const selectedSales = Number(product.selected_sales ?? product.yesterday_sales ?? 0);
+      const selectedRevenue = Number(product.selected_revenue || 0);
       acc.productCount += 1;
       acc.totalPrice += Number(product.price || 0);
+      acc.totalSales += selectedSales;
+      acc.totalRevenue += selectedRevenue;
       acc.missingImageCount += product.image_url ? 0 : 1;
       acc.missingCompetitorCount += product.competitor_compare ? 0 : 1;
       acc.missingPriceCount += product.price === null ? 1 : 0;
@@ -331,6 +460,9 @@ async function dashboard() {
     {
       productCount: 0,
       totalPrice: 0,
+      totalSales: 0,
+      totalRevenue: 0,
+      selectedDate,
       missingImageCount: 0,
       missingCompetitorCount: 0,
       missingPriceCount: 0,
@@ -342,8 +474,33 @@ async function dashboard() {
     summary,
     products,
     fetchedAt: new Date().toISOString(),
-    source: { provider: "postgres" }
+    source: { provider: "postgres", selectedDate }
   };
+}
+
+async function storeMetrics({ days = 30 } = {}) {
+  const safeDays = Math.min(Math.max(Number(days) || 30, 1), 120);
+  if (process.env.MEMORY_STORE === "true") return [];
+
+  const result = await query(
+    `WITH days AS (
+       SELECT generate_series(
+         CURRENT_DATE - ($1::int - 1),
+         CURRENT_DATE,
+         interval '1 day'
+       )::date AS metric_date
+     )
+     SELECT
+       to_char(days.metric_date, 'YYYY-MM-DD') AS metric_date,
+       COALESCE(SUM(m.sales_units), 0) AS sales_units,
+       COALESCE(SUM(m.revenue), 0) AS revenue
+     FROM days
+     LEFT JOIN product_daily_metrics m ON m.metric_date = days.metric_date
+     GROUP BY days.metric_date
+     ORDER BY days.metric_date ASC`,
+    [safeDays]
+  );
+  return result.rows;
 }
 
 async function listMetrics(offerId, { days = 30 } = {}) {
@@ -354,7 +511,7 @@ async function listMetrics(offerId, { days = 30 } = {}) {
 
   const result = await query(
     `SELECT
-       metric_date,
+       to_char(metric_date, 'YYYY-MM-DD') AS metric_date,
        sales_units,
        ad_ratio,
        ad_spend,
@@ -426,6 +583,8 @@ module.exports = {
   importProducts,
   listMetrics,
   listProducts,
+  listStrategyHistory,
+  storeMetrics,
   upsertMetrics,
   updateProduct
 };

@@ -11,6 +11,7 @@
     "node": ">=18"
   },
   "dependencies": {
-    "pg": "^8.11.5"
+    "pg": "^8.11.5",
+    "socks-proxy-agent": "^8.0.5"
   }
 }

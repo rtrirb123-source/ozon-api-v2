@@ -97,7 +97,7 @@ p {
 
 .stats {
   display: grid;
-  grid-template-columns: repeat(6, minmax(130px, 1fr));
+  grid-template-columns: repeat(6, minmax(150px, 1fr));
   gap: 10px;
   margin-bottom: 16px;
 }
@@ -536,3 +536,549 @@ dialog {
     grid-template-columns: repeat(2, minmax(130px, 1fr));
   }
 }
+
+.competitor-cell {
+  width: 220px;
+}
+
+.competitor-text {
+  min-width: 100%;
+}
+
+.editable,
+.editable-text {
+  box-sizing: border-box;
+  display: block;
+  max-width: 100%;
+}
+
+.editable-text {
+  overflow: hidden;
+  resize: none;
+  line-height: 1.35;
+}
+
+th.competitor-cell,
+td.competitor-cell {
+  width: 260px !important;
+  min-width: 260px;
+  max-width: 260px;
+}
+
+.competitor-text {
+  min-width: 0 !important;
+}
+
+textarea.editable-text {
+  height: auto;
+  overflow: hidden !important;
+  resize: none !important;
+  white-space: pre-wrap;
+  line-height: 1.35;
+  field-sizing: content;
+}
+
+.editable-div {
+  height: auto !important;
+  max-height: none !important;
+  overflow: visible !important;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+.editable-div {
+  width: 100%;
+  min-height: 54px;
+  box-sizing: border-box;
+  display: block;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  padding: 4px;
+  background: #f8fafc;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  overflow: visible;
+}
+
+.editable-div:focus {
+  outline: 2px solid rgba(20, 108, 148, 0.22);
+  border-color: var(--brand);
+  background: white;
+}
+
+.editable-div {
+  width: 100%;
+  min-height: 54px;
+  box-sizing: border-box;
+  display: block;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  padding: 4px;
+  background: #f8fafc;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  overflow: visible;
+}
+
+.editable-div:focus {
+  outline: 2px solid rgba(20, 108, 148, 0.22);
+  border-color: var(--brand);
+  background: white;
+}
+
+.editable-div {
+  width: 100%;
+  min-height: 54px;
+  height: auto !important;
+  max-height: none !important;
+  overflow: visible !important;
+  resize: none !important;
+  box-sizing: border-box;
+  display: block;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+.editable-div {
+  width: 100%;
+  min-height: 54px;
+  height: auto !important;
+  max-height: none !important;
+  overflow: visible !important;
+  box-sizing: border-box;
+  display: block;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  padding: 4px;
+  background: #f8fafc;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+.editable-div:focus {
+  outline: 2px solid rgba(20, 108, 148, 0.22);
+  border-color: var(--brand);
+  background: white;
+}
+
+.market-tabs {
+  display: flex;
+  gap: 8px;
+  margin: 0 0 14px;
+}
+
+.market-tab {
+  border: 1px solid var(--line);
+  background: white;
+  color: var(--text);
+  min-height: 34px;
+  padding: 0 14px;
+  border-radius: 6px;
+}
+
+.market-tab.active {
+  border-color: var(--brand);
+  background: var(--brand);
+  color: white;
+}
+
+.market-tab.sync-wb {
+  margin-left: auto;
+}
+
+.editable-div {
+  height: auto !important;
+  max-height: none !important;
+  overflow: visible !important;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+/* Ozon/WB: keep competitor text wide even when optional columns are hidden. */
+th.competitor-cell,
+td.competitor-cell {
+  width: 260px !important;
+  min-width: 260px;
+  max-width: 260px;
+}
+
+/* WB: product strategy is wider than normal text columns. */
+th.strategy-cell,
+td.strategy-cell {
+  width: 195px !important;
+  min-width: 195px;
+  max-width: 195px;
+}
+
+/* forced column widths */
+th.competitor-cell,
+td.competitor-cell,
+th[data-field="competitor_compare"],
+td[data-field="competitor_compare"] {
+  width: 320px !important;
+  min-width: 320px !important;
+  max-width: 320px !important;
+}
+
+th.strategy-cell,
+td.strategy-cell,
+th[data-field="strategy"],
+td[data-field="strategy"] {
+  width: 195px !important;
+  min-width: 195px !important;
+  max-width: 195px !important;
+}
+
+/* Ozon long-text columns: competitor : strategy = 1 : 1.5 */
+th.ozon-competitor-ratio,
+td.ozon-competitor-ratio {
+  width: 260px !important;
+  min-width: 260px !important;
+  max-width: 260px !important;
+}
+
+th.ozon-strategy-ratio,
+td.ozon-strategy-ratio {
+  width: 390px !important;
+  min-width: 390px !important;
+  max-width: 390px !important;
+}
+
+.sync-status-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 10px 0 14px;
+  padding: 10px 14px;
+  border: 1px solid #d7e1ec;
+  border-radius: 6px;
+  background: #fff;
+}
+
+.sync-status-card strong {
+  margin-right: 12px;
+}
+
+.sync-status-text {
+  color: #475569;
+  font-size: 14px;
+}
+
+.sync-status-text.warning {
+  color: #b45309;
+}
+
+.sync-status-card button {
+  border: 1px solid #cbd5e1;
+  background: #fff;
+  border-radius: 6px;
+  padding: 6px 12px;
+  cursor: pointer;
+}
+
+.sync-status-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 10px 0 14px;
+  padding: 10px 14px;
+  border: 1px solid #d7e1ec;
+  border-radius: 6px;
+  background: #fff;
+}
+
+.sync-status-card strong {
+  margin-right: 12px;
+}
+
+.sync-status-text {
+  color: #475569;
+  font-size: 14px;
+}
+
+.sync-status-text.warning {
+  color: #b45309;
+}
+
+.sync-status-card button {
+  border: 1px solid #cbd5e1;
+  background: #fff;
+  border-radius: 6px;
+  padding: 6px 12px;
+  cursor: pointer;
+}
+
+
+.strategy-history-tooltip {
+  position: fixed;
+  z-index: 50;
+  max-height: min(360px, calc(100vh - 24px));
+  overflow: auto;
+  background: #111827;
+  color: #f8fafc;
+  border-radius: 6px;
+  padding: 10px;
+  box-shadow: 0 14px 36px rgba(15, 23, 42, 0.28);
+  font-size: 12px;
+  line-height: 1.45;
+  pointer-events: none;
+}
+
+.strategy-history-item + .strategy-history-item {
+  border-top: 1px solid rgba(226, 232, 240, 0.18);
+  margin-top: 8px;
+  padding-top: 8px;
+}
+
+.strategy-history-date {
+  font-weight: 700;
+  color: #ffffff;
+}
+
+.strategy-history-time {
+  color: #cbd5e1;
+  margin-top: 2px;
+}
+
+.strategy-history-content {
+  margin-top: 6px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.strategy-history-empty {
+  color: #e2e8f0;
+}
+
+
+.mapping-dialog {
+  width: min(1040px, calc(100vw - 32px));
+  max-height: min(760px, calc(100vh - 32px));
+  padding: 16px;
+  overflow: hidden;
+}
+
+.mapping-head,
+.mapping-tools,
+.mapping-add {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.mapping-head {
+  justify-content: space-between;
+}
+
+.mapping-head h2 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.mapping-tools input,
+.mapping-add input {
+  min-height: 34px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 0 10px;
+}
+
+.mapping-tools input {
+  flex: 1;
+}
+
+.mapping-add input {
+  width: 220px;
+}
+
+.mapping-table-wrap {
+  max-height: min(560px, calc(100vh - 220px));
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.mapping-table {
+  min-width: 880px;
+}
+
+.mapping-table td,
+.mapping-table th {
+  font-size: 12px;
+}
+
+.mapping-table strong,
+.mapping-table span,
+.mapping-table small {
+  display: block;
+}
+
+.mapping-table small {
+  color: var(--muted);
+  margin-top: 4px;
+}
+
+
+/* Keep the sales trend visible while the product table scrolls. */
+.trend-panel {
+  position: sticky;
+  top: 0;
+  z-index: 8;
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.08);
+}
+
+.trend-chart {
+  min-height: 180px;
+}
+
+.trend-chart svg {
+  height: 190px;
+}
+
+.trend-empty {
+  min-height: 160px;
+}
+
+.table-shell {
+  max-height: calc(100vh - 390px);
+}
+
+@media (max-height: 760px) {
+  .trend-chart {
+    min-height: 150px;
+  }
+
+  .trend-chart svg {
+    height: 160px;
+  }
+
+  .trend-empty {
+    min-height: 130px;
+  }
+
+  .table-shell {
+    max-height: calc(100vh - 330px);
+  }
+}
+
+.trend-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 12px;
+}
+
+.chart-title {
+  color: #334155;
+  font-size: 13px;
+  font-weight: 700;
+  margin: 0 0 6px;
+}
+
+.revenue-line {
+  fill: none;
+  stroke: #027a48;
+  stroke-width: 3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.revenue-point {
+  fill: #027a48;
+  stroke: white;
+  stroke-width: 2;
+}
+
+#metricDateInput {
+  min-height: 36px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 0 8px;
+  background: white;
+  color: var(--text);
+}
+
+@media (max-width: 1100px) {
+  .trend-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.seerfar-link-btn {
+  margin-top: 6px;
+  padding: 4px 8px;
+  border: 1px solid #b6c7e6;
+  border-radius: 6px;
+  background: #eef5ff;
+  color: #1d4ed8;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.seerfar-link-btn:hover {
+  background: #dbeafe;
+}
+
+.hidden-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 36px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: white;
+  color: var(--muted);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.actions-cell {
+  min-width: 72px;
+}
+
+.hide-product-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 26px;
+  padding: 0 9px;
+  border-color: #cbd5e1;
+  background: #f8fafc;
+  color: #475569;
+  font-size: 12px;
+}
+
+.hide-product-btn:hover {
+  border-color: var(--danger);
+  background: #fff1f2;
+  color: var(--danger);
+}
+
+.hide-product-btn.restore:hover {
+  border-color: var(--brand);
+  background: #eff6ff;
+  color: var(--brand);
+}
+
+.hidden-product-row {
+  opacity: 0.58;
+  background: #f8fafc;
+}
+
+
+/* PORTAL_SUBNAV_V1 */
+.portal-subnav{display:flex;gap:8px;align-items:center;margin:10px 0 16px;padding:6px;background:#edf2f7;border-radius:12px;width:max-content}
+.portal-subnav a{padding:8px 14px;border-radius:8px;color:#52647d;text-decoration:none;font-weight:700}
+.portal-subnav a.active{background:#fff;color:#102342;box-shadow:0 2px 8px rgba(16,35,66,.09)}

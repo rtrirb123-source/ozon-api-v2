@@ -29,10 +29,15 @@ const config = {
   ozonApiKey: process.env.OZON_API_KEY || "",
   ozonPerformanceClientId: process.env.OZON_PERFORMANCE_CLIENT_ID || "",
   ozonPerformanceClientSecret: process.env.OZON_PERFORMANCE_CLIENT_SECRET || "",
+  wbSupplierId: process.env.WB_SUPPLIER_ID || "",
+  wbApiKey: process.env.WB_API_KEY || "",
   allowedOrigins: (process.env.ALLOWED_ORIGINS || "*")
     .split(",")
     .map((item) => item.trim())
-    .filter(Boolean)
+    .filter(Boolean),
+  seerfarBaseUrl: process.env.SEERFAR_BASE_URL || "https://www.seerfar.cn",
+  seerfarCookie: process.env.SEERFAR_COOKIE || "",
+  seerfarAuthorization: process.env.SEERFAR_AUTHORIZATION || ""
 };
 
 module.exports = { config };

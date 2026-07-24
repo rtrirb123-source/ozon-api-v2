@@ -1,0 +1,120 @@
+:root {
+  --navy: #15223b;
+  --navy-2: #243a5a;
+  --blue: #2367d1;
+  --teal: #168f91;
+  --gold: #f2b134;
+  --orange: #e76f51;
+  --ink: #1c2736;
+  --muted: #718198;
+  --line: #dce4ee;
+  --panel: #ffffff;
+  --canvas: #f3f6fa;
+  --group: #f2f5f9;
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  color: var(--ink);
+  background: var(--canvas);
+  font: 14px/1.45 Inter, "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+.app { width: min(1900px, calc(100% - 32px)); margin: 0 auto; padding: 24px 0 48px; }
+.topbar { display: flex; align-items: center; justify-content: space-between; gap: 24px; margin-bottom: 18px; }
+.topbar h1 { margin: 2px 0 4px; font-size: 30px; letter-spacing: -.5px; }
+.topbar p { margin: 0; color: var(--muted); }
+.eyebrow, .panel-kicker { color: var(--blue) !important; font-size: 11px; font-weight: 800; letter-spacing: 1.3px; }
+.actions { display: flex; gap: 10px; }
+input, button, .market-tab {
+  min-height: 38px; border: 1px solid var(--line); border-radius: 8px; background: white; color: var(--ink);
+}
+input { width: 270px; padding: 0 13px; }
+button { padding: 0 15px; cursor: pointer; font-weight: 700; }
+button:hover { border-color: var(--blue); color: var(--blue); }
+.market-tabs { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+.market-tab { display: inline-flex; align-items: center; padding: 0 14px; text-decoration: none; }
+.market-tab.active { color: white; background: var(--navy); border-color: var(--navy); }
+.hero {
+  display: flex; justify-content: space-between; align-items: center; gap: 20px;
+  padding: 15px 18px; color: white; background: linear-gradient(100deg, var(--navy), var(--navy-2)); border-radius: 12px;
+}
+.status-dot { display: inline-block; width: 9px; height: 9px; margin-right: 8px; border-radius: 50%; background: #54d2a0; box-shadow: 0 0 0 4px rgba(84,210,160,.15); }
+.month-navigation { display: flex; align-items: center; gap: 7px; }
+.month-navigation select, .month-arrow { min-height: 34px; color: white; border-color: rgba(255,255,255,.25); background: rgba(255,255,255,.08); font-size: 14px; font-weight: 800; }
+.month-navigation select { width: 128px; padding: 0 10px; }
+.month-navigation select option { color: var(--ink); background: white; }
+.month-arrow { min-width: 34px; padding: 0 9px; font-size: 22px; }
+.month-arrow:disabled { opacity: .35; cursor: not-allowed; }
+.muted { margin-left: 10px; color: #b9c7da; }
+.legend { display: flex; gap: 18px; color: #d9e3f0; font-size: 12px; }
+.legend i { display: inline-block; width: 9px; height: 9px; margin-right: 6px; border-radius: 2px; }
+.legend-sales { background: var(--teal); } .legend-cost { background: var(--gold); } .legend-ad { background: var(--orange); }
+.kpi-grid { display: grid; grid-template-columns: repeat(6, minmax(155px, 1fr)); gap: 12px; margin: 16px 0; }
+.kpi { min-height: 112px; padding: 17px; background: var(--panel); border: 1px solid var(--line); border-radius: 11px; box-shadow: 0 7px 24px rgba(32, 52, 82, .05); }
+.kpi::before { content: ""; display: block; width: 34px; height: 4px; margin-bottom: 14px; border-radius: 4px; background: var(--accent, var(--teal)); }
+.kpi span { display: block; color: var(--muted); font-size: 12px; font-weight: 700; }
+.kpi strong { display: block; margin-top: 5px; color: var(--navy); font-size: 24px; }
+.kpi small { display: block; margin-top: 4px; color: var(--muted); }
+.insight-grid { display: grid; grid-template-columns: 1fr 1.25fr; gap: 14px; margin-bottom: 16px; }
+.panel, .table-panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 7px 24px rgba(32, 52, 82, .05); }
+.panel { padding: 18px; }
+.panel-head, .table-title { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 16px; }
+.panel h2, .table-title h2 { margin: 3px 0 0; font-size: 18px; }
+.panel-note, .row-count { color: var(--muted); font-size: 12px; }
+.cost-bars { display: grid; gap: 13px; }
+.cost-row { display: grid; grid-template-columns: 94px 1fr 112px; align-items: center; gap: 10px; }
+.cost-track { height: 11px; overflow: hidden; border-radius: 10px; background: #edf1f6; }
+.cost-fill { height: 100%; border-radius: 10px; background: linear-gradient(90deg, var(--gold), #f7c75e); }
+.cost-value { text-align: right; font-variant-numeric: tabular-nums; font-weight: 700; }
+.top-products { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+.product-card { min-width: 0; padding: 10px; border: 1px solid var(--line); border-radius: 9px; background: #fbfcfe; }
+.product-card img { width: 100%; height: 92px; object-fit: contain; background: white; border-radius: 7px; }
+.product-card strong, .product-card span { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.product-card strong { margin-top: 7px; font-size: 12px; }
+.product-card span { color: var(--teal); font-weight: 800; }
+.table-panel { overflow: hidden; }
+.table-title { padding: 18px 18px 0; }
+.economics-controls { display: flex; align-items: flex-end; justify-content: flex-end; gap: 12px; flex-wrap: wrap; }
+.operator-switch { display: flex; align-items: center; gap: 6px; }
+.operator-switch > span { color: #536d8c; font-size: 12px; font-weight: 800; }
+.operator-filter { min-height: 34px; padding: 0 12px; font-size: 12px; font-weight: 800; }
+.operator-filter.active { color: white; border-color: var(--blue); background: var(--blue); }
+.economics-controls label { color: #536d8c; font-size: 12px; font-weight: 800; }
+.economics-controls input { display: block; width: 142px; min-height: 34px; margin-top: 4px; font-size: 12px; font-weight: 700; }
+.economics-controls .input-unit { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; font-weight: 600; }
+.economics-controls .input-unit input { width: 92px; }
+.rate-source { max-width: 190px; color: var(--muted); font-size: 11px; }
+.table-shell { overflow: auto; max-height: 68vh; border-top: 1px solid var(--line); }
+table { width: max-content; min-width: 100%; border-collapse: separate; border-spacing: 0; font-size: 12px; }
+th, td { min-width: 112px; padding: 9px 10px; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); text-align: right; white-space: nowrap; }
+th { color: #536d8c; font-weight: 800; }
+.group-row th { position: sticky; top: 0; z-index: 4; height: 46px; text-align: left; background: var(--group); }
+.group-row th span { color: #0766ed; font-size: 10px; }
+.group-profit { float: right; margin-left: 18px; color: #168f91; font-size: 12px; font-weight: 800; }
+.column-row th { position: sticky; top: 46px; z-index: 3; height: 48px; text-align: center; background: #f9fbfd; }
+tbody tr:nth-child(odd) td { background: #f5fbfe; }
+tbody tr:hover td { background: #eef7ff; }
+td:nth-child(1), th:nth-child(1) { min-width: 92px; text-align: center; }
+td:nth-child(3), td:nth-child(4) { text-align: left; }
+.product-image { display: block; width: 70px; height: 54px; margin: auto; object-fit: contain; border-radius: 6px; background: white; }
+.operator-input { width: 72px; min-height: 32px; padding: 0 6px; font-size: 12px; }
+.money { font-variant-numeric: tabular-nums; }
+.group-total-head { color: #0f6f78; background: #eef8f8 !important; }
+.group-total-cell { color: #0f6f78; font-weight: 800; background: #f2fbfb !important; }
+.negative { color: #c84d3f; }
+.toast { position: fixed; right: 24px; bottom: 24px; padding: 12px 16px; color: white; background: var(--navy); border-radius: 8px; box-shadow: 0 10px 30px rgba(0,0,0,.2); }
+@media (max-width: 1100px) {
+  .kpi-grid { grid-template-columns: repeat(3, 1fr); }
+  .insight-grid { grid-template-columns: 1fr; }
+  .top-products { grid-template-columns: repeat(4, 1fr); }
+}
+@media (max-width: 680px) {
+  .app { width: min(100% - 16px, 1900px); padding-top: 12px; }
+  .topbar { align-items: stretch; flex-direction: column; }
+  .actions { flex-direction: column; } input { width: 100%; }
+  .hero { align-items: flex-start; flex-direction: column; }
+  .legend { flex-wrap: wrap; }
+  .kpi-grid { grid-template-columns: repeat(2, 1fr); }
+  .top-products { grid-template-columns: repeat(2, 1fr); }
+}

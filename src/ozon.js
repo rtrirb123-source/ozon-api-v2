@@ -1,9 +1,15 @@
 const https = require("https");
+const fs = require("fs");
+const path = require("path");
 const { config } = require("./config");
 const products = require("./products");
 
 const OZON_API_HOST = "api-seller.ozon.ru";
 const OZON_PERFORMANCE_HOST = "api-performance.ozon.ru";
+const SELLER_API_INTERVAL_MS = 700;
+const SELLER_API_RETRY_BASE_MS = 1600;
+
+let sellerApiChain = Promise.resolve();
 
 function formatDate(date) {
   return date.toISOString().slice(0, 10);
@@ -15,7 +21,11 @@ function moscowDateOffset(daysOffset = 0) {
   return date.toISOString().slice(0, 10);
 }
 
-function requestJson(path, body) {
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function requestJsonOnce(path, body) {
   return new Promise((resolve, reject) => {
     if (!config.ozonClientId || !config.ozonApiKey) {
       const error = new Error("OZON_CLIENT_ID and OZON_API_KEY are required");
@@ -56,7 +66,7 @@ function requestJson(path, body) {
           }
           if (res.statusCode < 200 || res.statusCode >= 300) {
             const error = new Error(parsed.message || `Ozon API HTTP ${res.statusCode}`);
-            error.statusCode = 502;
+            error.statusCode = res.statusCode;
             error.details = parsed;
             reject(error);
             return;
@@ -71,6 +81,29 @@ function requestJson(path, body) {
     req.write(payload);
     req.end();
   });
+}
+
+async function queuedRequestJson(path, body) {
+  let lastError;
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    if (attempt > 0) await sleep(SELLER_API_RETRY_BASE_MS * Math.pow(2, attempt - 1));
+    try {
+      const result = await requestJsonOnce(path, body);
+      await sleep(SELLER_API_INTERVAL_MS);
+      return result;
+    } catch (error) {
+      lastError = error;
+      const isRateLimit = error.statusCode === 429 || /rate limit/i.test(error.message || "");
+      if (!isRateLimit || attempt === 4) throw error;
+    }
+  }
+  throw lastError;
+}
+
+function requestJson(path, body) {
+  const task = sellerApiChain.catch(() => {}).then(() => queuedRequestJson(path, body));
+  sellerApiChain = task.catch(() => {});
+  return task;
 }
 
 function performanceRequestJson(path, { method = "GET", body, token } = {}) {
@@ -354,6 +387,209 @@ async function fetchProductInfo(offerIds) {
   return items;
 }
 
+async function fetchProductAttributes(offerIds) {
+  const result = [];
+  let lastId = "";
+
+  while (true) {
+    const response = await requestJson("/v4/product/info/attributes", {
+      filter: {
+        offer_id: offerIds,
+        visibility: "ALL"
+      },
+      limit: 100,
+      last_id: lastId
+    });
+    result.push(...(response.result || []));
+    lastId = response.last_id || "";
+    if (!lastId) break;
+  }
+
+  return result;
+}
+
+async function fetchProductDescription(offerId) {
+  const response = await requestJson("/v1/product/info/description", { offer_id: offerId });
+  return response.result || null;
+}
+
+function cloneJson(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+
+function firstValue(attributes, id) {
+  const attribute = (attributes || []).find((item) => Number(item.id) === Number(id));
+  return attribute?.values?.[0]?.value || "";
+}
+
+function normalizeString(value) {
+  return value === undefined || value === null ? "" : String(value).trim();
+}
+
+function normalizeHashtags(value) {
+  if (Array.isArray(value)) return value.map(normalizeString).filter(Boolean).join(" ");
+  return normalizeString(value);
+}
+
+function normalizeRichContent(value) {
+  if (value === undefined || value === null || value === "") return "";
+  if (typeof value === "string") {
+    JSON.parse(value);
+    return value;
+  }
+  return JSON.stringify(value);
+}
+
+function setStringAttribute(attributes, id, value) {
+  if (value === undefined) return false;
+  const text = id === 23171 ? normalizeHashtags(value) : normalizeString(value);
+  if (!text) return false;
+
+  const existing = attributes.find((item) => Number(item.id) === Number(id));
+  const nextValues = [{ dictionary_value_id: 0, value: text }];
+  if (existing) {
+    existing.values = nextValues;
+  } else {
+    attributes.push({ id: Number(id), complex_id: 0, values: nextValues });
+  }
+  return true;
+}
+
+function buildImportItem(info, attributesItem, updates = {}) {
+  const attributes = cloneJson(attributesItem.attributes || []);
+  const changedAttributes = [];
+
+  if (setStringAttribute(attributes, 4180, updates.title)) changedAttributes.push("Название");
+  if (setStringAttribute(attributes, 4191, updates.description)) changedAttributes.push("Аннотация");
+  if (setStringAttribute(attributes, 23171, updates.hashtags ?? updates.keywords)) changedAttributes.push("#Хештеги");
+  if (setStringAttribute(attributes, 4384, updates.packageContents)) changedAttributes.push("Комплектация");
+  if (updates.richContent !== undefined || updates.richContentJson !== undefined) {
+    const richContent = normalizeRichContent(updates.richContent ?? updates.richContentJson);
+    if (richContent) {
+      setStringAttribute(attributes, 11254, richContent);
+      changedAttributes.push("Rich-контент JSON");
+    }
+  }
+
+  const title = normalizeString(updates.title) || attributesItem.name || info.name || firstValue(attributes, 4180);
+  const images = Array.isArray(updates.images) && updates.images.length
+    ? updates.images.map(normalizeString).filter(Boolean)
+    : cloneJson(attributesItem.images || info.images || []);
+  const primaryImage = normalizeString(updates.primaryImage || updates.primary_image) || attributesItem.primary_image || info.primary_image?.[0] || images[0] || "";
+
+  return {
+    item: {
+      attributes,
+      barcode: attributesItem.barcode || info.barcodes?.[0] || "",
+      barcodes: attributesItem.barcodes || info.barcodes || [],
+      description_category_id: Number(attributesItem.description_category_id || info.description_category_id),
+      type_id: Number(attributesItem.type_id || info.type_id),
+      dimension_unit: attributesItem.dimension_unit || "mm",
+      height: Number(attributesItem.height || 0),
+      depth: Number(attributesItem.depth || 0),
+      width: Number(attributesItem.width || 0),
+      weight: Number(attributesItem.weight || 0),
+      weight_unit: attributesItem.weight_unit || "g",
+      images,
+      primary_image: primaryImage,
+      name: title,
+      offer_id: attributesItem.offer_id || info.offer_id,
+      old_price: info.old_price || "",
+      price: info.price || "",
+      vat: info.vat || "0"
+    },
+    changedAttributes
+  };
+}
+
+async function getOzonProductCard(offerId) {
+  const [info] = await fetchProductInfo([offerId]);
+  if (!info) {
+    const error = new Error("Ozon product not found");
+    error.statusCode = 404;
+    throw error;
+  }
+
+  const [attributes] = await fetchProductAttributes([offerId]);
+  const description = await fetchProductDescription(offerId);
+
+  return {
+    info,
+    attributes,
+    description,
+    summary: {
+      offer_id: info.offer_id,
+      product_id: info.id,
+      sku: info.sku || info.sources?.[0]?.sku || attributes?.sku || "",
+      title: info.name,
+      description: description?.description || firstValue(attributes?.attributes, 4191),
+      hashtags: firstValue(attributes?.attributes, 23171),
+      packageContents: firstValue(attributes?.attributes, 4384),
+      richContentJson: firstValue(attributes?.attributes, 11254),
+      primaryImage: info.primary_image?.[0] || attributes?.primary_image || "",
+      images: info.images || attributes?.images || [],
+      status: info.statuses?.status_name || "",
+      validationStatus: info.statuses?.validation_status || "",
+      moderationStatus: info.statuses?.moderate_status || ""
+    }
+  };
+}
+
+async function buildOzonProductUpdatePreview(offerId, updates = {}) {
+  const card = await getOzonProductCard(offerId);
+  const { item, changedAttributes } = buildImportItem(card.info, card.attributes, updates);
+
+  return {
+    offer_id: offerId,
+    confirmText: `UPDATE_${offerId}`,
+    changedAttributes,
+    current: card.summary,
+    next: {
+      title: item.name,
+      description: firstValue(item.attributes, 4191),
+      hashtags: firstValue(item.attributes, 23171),
+      packageContents: firstValue(item.attributes, 4384),
+      richContentJson: firstValue(item.attributes, 11254),
+      primaryImage: item.primary_image,
+      images: item.images
+    },
+    importPayload: { items: [item] }
+  };
+}
+
+function writeProductBackup(offerId, payload) {
+  const dir = path.join(process.cwd(), "backups", "ozon-products");
+  fs.mkdirSync(dir, { recursive: true });
+  const safeOfferId = String(offerId).replace(/[^0-9A-Za-z_-]/g, "_");
+  const filename = `${safeOfferId}-${new Date().toISOString().replace(/[:.]/g, "-")}.json`;
+  const fullPath = path.join(dir, filename);
+  fs.writeFileSync(fullPath, JSON.stringify(payload, null, 2));
+  return fullPath;
+}
+
+async function submitOzonProductUpdate(offerId, updates = {}, confirm = "") {
+  const preview = await buildOzonProductUpdatePreview(offerId, updates);
+  if (confirm !== preview.confirmText) {
+    const error = new Error(`Confirmation required: ${preview.confirmText}`);
+    error.statusCode = 400;
+    error.details = { confirmText: preview.confirmText, preview };
+    throw error;
+  }
+
+  const backupPath = writeProductBackup(offerId, preview);
+  const response = await requestJson("/v3/product/import", preview.importPayload);
+  return {
+    backupPath,
+    response,
+    preview: {
+      offer_id: preview.offer_id,
+      changedAttributes: preview.changedAttributes,
+      current: preview.current,
+      next: preview.next
+    }
+  };
+}
+
 async function fetchAllProductList() {
   const items = [];
   let lastId = "";
@@ -596,6 +832,133 @@ async function syncOzonMetrics({ days = 30 } = {}) {
   };
 }
 
+function normalizeFinanceDate(value, fallback, endOfDay = false) {
+  const source = String(value || fallback || "").slice(0, 19);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(source)) {
+    return `${source}T${endOfDay ? "23:59:59" : "00:00:00"}Z`;
+  }
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/.test(source)) {
+    return `${source.replace(/Z$/, "")}Z`;
+  }
+  const day = moscowDateOffset(endOfDay ? 0 : -7);
+  return `${day}T${endOfDay ? "23:59:59" : "00:00:00"}Z`;
+}
+
+function financeNumber(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : 0;
+}
+
+function summarizeFinanceOperation(item) {
+  const servicesTotal = (item.services || []).reduce((sum, service) => sum + financeNumber(service.price), 0);
+  return {
+    operation_id: item.operation_id || "",
+    operation_type: item.operation_type || "",
+    operation_date: item.operation_date || "",
+    posting_number: item.posting?.posting_number || item.posting_number || "",
+    amount: financeNumber(item.amount),
+    accruals_for_sale: financeNumber(item.accruals_for_sale),
+    sale_commission: financeNumber(item.sale_commission),
+    services_total: Number(servicesTotal.toFixed(2)),
+    items: (item.items || []).map((entry) => ({
+      name: entry.name || "",
+      sku: entry.sku || "",
+      quantity: financeNumber(entry.quantity)
+    }))
+  };
+}
+
+async function listFinanceTransactions({ from, to, pageSize = 1000, includeItems = false } = {}) {
+  const safePageSize = Math.min(Math.max(Number(pageSize) || 1000, 1), 1000);
+  const dateFrom = normalizeFinanceDate(from, moscowDateOffset(-7), false);
+  const dateTo = normalizeFinanceDate(to, moscowDateOffset(0), true);
+  const operations = [];
+  const byOperation = new Map();
+  const totals = {
+    amount: 0,
+    accrualsForSale: 0,
+    saleCommission: 0,
+    services: 0
+  };
+  let pageCount = 1;
+  let rowCount = 0;
+
+  for (let page = 1; page <= pageCount && page <= 50; page += 1) {
+    const response = await requestJson("/v3/finance/transaction/list", {
+      filter: {
+        date: {
+          from: dateFrom,
+          to: dateTo
+        },
+        operation_type: [],
+        posting_number: "",
+        transaction_type: "all"
+      },
+      page,
+      page_size: safePageSize
+    });
+
+    const result = response.result || {};
+    const chunk = result.operations || [];
+    pageCount = Number(result.page_count || pageCount || 1);
+    rowCount = Number(result.row_count || rowCount || chunk.length);
+
+    for (const rawItem of chunk) {
+      const item = summarizeFinanceOperation(rawItem);
+      const operationType = item.operation_type || "unknown";
+      const bucket = byOperation.get(operationType) || {
+        operationType,
+        count: 0,
+        amount: 0,
+        accrualsForSale: 0,
+        saleCommission: 0,
+        services: 0
+      };
+
+      bucket.count += 1;
+      bucket.amount += item.amount;
+      bucket.accrualsForSale += item.accruals_for_sale;
+      bucket.saleCommission += item.sale_commission;
+      bucket.services += item.services_total;
+      byOperation.set(operationType, bucket);
+
+      totals.amount += item.amount;
+      totals.accrualsForSale += item.accruals_for_sale;
+      totals.saleCommission += item.sale_commission;
+      totals.services += item.services_total;
+      if (includeItems) operations.push(item);
+    }
+  }
+
+  const topOperations = Array.from(byOperation.values())
+    .map((item) => ({
+      operationType: item.operationType,
+      count: item.count,
+      amount: Number(item.amount.toFixed(2)),
+      accrualsForSale: Number(item.accrualsForSale.toFixed(2)),
+      saleCommission: Number(item.saleCommission.toFixed(2)),
+      services: Number(item.services.toFixed(2))
+    }))
+    .sort((a, b) => Math.abs(b.amount) - Math.abs(a.amount));
+
+  return {
+    from: dateFrom,
+    to: dateTo,
+    pageSize: safePageSize,
+    pageCount,
+    rowCount,
+    operationsFetched: includeItems ? operations.length : rowCount,
+    totals: {
+      amount: Number(totals.amount.toFixed(2)),
+      accrualsForSale: Number(totals.accrualsForSale.toFixed(2)),
+      saleCommission: Number(totals.saleCommission.toFixed(2)),
+      services: Number(totals.services.toFixed(2))
+    },
+    topOperations,
+    operations: includeItems ? operations : undefined
+  };
+}
+
 async function previewOzonAnalytics({ days = 3, limit = 10 } = {}) {
   const safeDays = Math.min(Math.max(Number(days) || 3, 1), 30);
   const to = new Date();
@@ -614,4 +977,457 @@ async function previewOzonAnalytics({ days = 3, limit = 10 } = {}) {
   return response.result?.data || [];
 }
 
-module.exports = { previewOzonAnalytics, syncOzonMetrics, syncOzonProducts };
+function postingClusterOf(warehouseName) {
+  const warehouse = String(warehouseName || "").toUpperCase();
+  if (!warehouse) return "UNKNOWN";
+  if (/ЖУКОВСК|ХОРУГВ|ПУШКИН|ТВЕР|ПЕТРОВСК|МОСК|СОФЬИНО|ДОМОДЕД|ГРИВНО|ЦЕНТР/.test(warehouse)) {
+    return "Центр / Москва";
+  }
+  if (/ЕКАТЕРИН|УРАЛ|ПЕРМ|ЧЕЛЯБ|ТЮМЕН/.test(warehouse)) return "Урал / Екатеринбург";
+  if (/КАЗАН|САМАР|НИЖНИЙ|ПОВОЛЖ|ВОЛГ|УФА/.test(warehouse)) return "Поволжье / Казань-Самара";
+  if (/РОСТОВ|КРАСНОДАР|НЕВИННОМ|ЮГ|АДЫГ|ВОЛГОГРАД/.test(warehouse)) return "Юг";
+  if (/САНКТ|СПБ|ШУШАР|СЕВЕРО|ПЕТЕРБ/.test(warehouse)) return "Северо-Запад / СПБ";
+  if (/НОВОСИБ|СИБИР|КРАСНОЯР|ОМСК/.test(warehouse)) return "Сибирь";
+  if (/ХАБАР|ДАЛЬ|ВЛАДИВ|ИРКУТ/.test(warehouse)) return "Дальний Восток";
+  return `OTHER / ${warehouseName}`;
+}
+
+function allocateQuantity(total, buckets) {
+  const safeTotal = Math.max(0, Math.round(Number(total) || 0));
+  const entries = Object.entries(buckets || {}).filter(([, value]) => Number(value) > 0);
+  const basis = entries.reduce((sum, [, value]) => sum + Number(value || 0), 0);
+  if (!safeTotal || !basis) return [];
+
+  const allocated = entries.map(([key, value]) => {
+    const exact = (safeTotal * Number(value || 0)) / basis;
+    const qty = Math.floor(exact);
+    return { key, qty, remainder: exact - qty, basis: Number(value || 0) };
+  });
+  let remaining = safeTotal - allocated.reduce((sum, item) => sum + item.qty, 0);
+  allocated
+    .sort((a, b) => b.remainder - a.remainder || b.basis - a.basis)
+    .forEach((item) => {
+      if (remaining > 0) {
+        item.qty += 1;
+        remaining -= 1;
+      }
+    });
+  return allocated
+    .filter((item) => item.qty > 0)
+    .sort((a, b) => b.qty - a.qty)
+    .map(({ key, qty }) => ({ key, qty }));
+}
+
+async function fetchClusterStocksBySku(skus) {
+  const cleanSkus = Array.from(
+    new Set((skus || []).map((sku) => String(sku || "").trim()).filter(Boolean))
+  );
+  const bySku = new Map();
+  const chunkSize = 20;
+
+  for (let index = 0; index < cleanSkus.length; index += chunkSize) {
+    const chunk = cleanSkus.slice(index, index + chunkSize);
+    let offset = 0;
+    const limit = 1000;
+
+    for (let page = 0; page < 20; page += 1) {
+      let response;
+      try {
+        response = await requestJson("/v1/analytics/stocks", {
+          skus: chunk,
+          limit,
+          offset
+        });
+      } catch (error) {
+        console.warn("[cluster-stocks]", error.message);
+        break;
+      }
+      const rows = response.items || [];
+      for (const row of rows) {
+        const sku = String(row.sku || "");
+        const cluster = String(row.cluster_name || "UNKNOWN");
+        if (!sku || !cluster) continue;
+        const skuMap = bySku.get(sku) || {};
+        const current = skuMap[cluster] || {
+          available: 0,
+          valid: 0,
+          requested: 0,
+          transit: 0
+        };
+        current.available += Number(row.available_stock_count || 0);
+        current.valid += Number(row.valid_stock_count || 0);
+        current.requested += Number(row.requested_stock_count || 0);
+        current.transit += Number(row.transit_stock_count || 0);
+        skuMap[cluster] = current;
+        bySku.set(sku, skuMap);
+      }
+      if (rows.length < limit) break;
+      offset += limit;
+    }
+  }
+
+  return bySku;
+}
+
+async function fetchFboPostings({ days = 30 } = {}) {
+  const safeDays = Math.min(Math.max(Number(days) || 30, 1), 60);
+  const to = new Date();
+  const since = new Date(Date.now() - safeDays * 24 * 60 * 60 * 1000);
+  const postings = [];
+  const limit = 1000;
+  let offset = 0;
+
+  for (let page = 0; page < 30; page += 1) {
+    const response = await requestJson("/v2/posting/fbo/list", {
+      dir: "ASC",
+      filter: {
+        since: since.toISOString(),
+        to: to.toISOString()
+      },
+      limit,
+      offset,
+      translit: false,
+      with: {
+        analytics_data: true,
+        financial_data: true
+      }
+    });
+    const chunk = response.result?.postings || response.result || [];
+    if (!Array.isArray(chunk) || !chunk.length) break;
+    postings.push(...chunk);
+    if (chunk.length < limit) break;
+    offset += limit;
+  }
+
+  return {
+    since: since.toISOString().slice(0, 10),
+    to: to.toISOString().slice(0, 10),
+    postings
+  };
+}
+
+function summarizePostingsByOffer(postings, wantedOffers = new Set()) {
+  const byOffer = new Map();
+  for (const posting of postings || []) {
+    const day = String(posting.created_at || "").slice(0, 10);
+    const warehouse = posting.analytics_data?.warehouse_name || "UNKNOWN";
+    const warehouseCluster = posting.financial_data?.cluster_from || postingClusterOf(warehouse);
+    const demandCluster = posting.financial_data?.cluster_to || posting.analytics_data?.city || warehouseCluster;
+    for (const product of posting.products || []) {
+      const offerId = String(product.offer_id || "");
+      if (!offerId || (wantedOffers.size && !wantedOffers.has(offerId))) continue;
+      const qty = Number(product.quantity || 0);
+      const item = byOffer.get(offerId) || {
+        offer_id: offerId,
+        ozon_sku: String(product.sku || ""),
+        title: product.name || "",
+        posting_units: 0,
+        clusters: {},
+        demand_clusters: {},
+        warehouse_clusters: {},
+        warehouses: {},
+        days: {}
+      };
+      item.posting_units += qty;
+      item.clusters[demandCluster] = (item.clusters[demandCluster] || 0) + qty;
+      item.demand_clusters[demandCluster] = (item.demand_clusters[demandCluster] || 0) + qty;
+      item.warehouse_clusters[warehouseCluster] = (item.warehouse_clusters[warehouseCluster] || 0) + qty;
+      item.warehouses[warehouse] = (item.warehouses[warehouse] || 0) + qty;
+      if (day) {
+        item.days[day] = item.days[day] || {};
+        item.days[day][demandCluster] = (item.days[day][demandCluster] || 0) + qty;
+      }
+      byOffer.set(offerId, item);
+    }
+  }
+  return byOffer;
+}
+
+function sumMetricRows(rows) {
+  return (rows || []).reduce(
+    (acc, row) => {
+      acc.sales += Number(row.sales_units || 0);
+      acc.revenue += Number(row.revenue || 0);
+      return acc;
+    },
+    { sales: 0, revenue: 0 }
+  );
+}
+
+const fboReplenishmentCache = new Map();
+const fboReplenishmentRefreshes = new Set();
+const FBO_REPLENISHMENT_CACHE_FILE = path.join(__dirname, "..", "data", "fbo-replenishment-cache.json");
+const FBO_REPLENISHMENT_CACHE_MS = 6 * 60 * 60 * 1000;
+
+function fboReplenishmentCacheKey({ days, targetDays, offers }) {
+  return JSON.stringify({
+    version: "demand-cluster-stock-v3",
+    days: Number(days),
+    targetDays: Number(targetDays),
+    offers: String(offers || "")
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean)
+      .sort()
+  });
+}
+
+function cachedPayload(entry) {
+  const ageSeconds = Math.round((Date.now() - Number(entry.saved_at || 0)) / 1000);
+  const stale = ageSeconds * 1000 >= FBO_REPLENISHMENT_CACHE_MS;
+  return {
+    ...entry.data,
+    cached: true,
+    cache_stale: stale,
+    cache_age_seconds: ageSeconds
+  };
+}
+
+function readFboReplenishmentCache(cacheKey, { allowStale = true } = {}) {
+  const memory = fboReplenishmentCache.get(cacheKey);
+  if (memory && (allowStale || Date.now() - Number(memory.saved_at || 0) < FBO_REPLENISHMENT_CACHE_MS)) {
+    return cachedPayload(memory);
+  }
+
+  try {
+    const parsed = JSON.parse(fs.readFileSync(FBO_REPLENISHMENT_CACHE_FILE, "utf8"));
+    const entry = parsed[cacheKey];
+    if (entry && (allowStale || Date.now() - Number(entry.saved_at || 0) < FBO_REPLENISHMENT_CACHE_MS)) {
+      fboReplenishmentCache.set(cacheKey, entry);
+      return cachedPayload(entry);
+    }
+  } catch (error) {
+    if (error.code !== "ENOENT") console.warn("[fbo-replenishment-cache:read]", error.message);
+  }
+  return null;
+}
+
+function writeFboReplenishmentCache(cacheKey, data) {
+  const entry = { saved_at: Date.now(), data };
+  fboReplenishmentCache.set(cacheKey, entry);
+  try {
+    fs.mkdirSync(path.dirname(FBO_REPLENISHMENT_CACHE_FILE), { recursive: true });
+    let parsed = {};
+    try {
+      parsed = JSON.parse(fs.readFileSync(FBO_REPLENISHMENT_CACHE_FILE, "utf8"));
+    } catch (error) {
+      if (error.code !== "ENOENT") parsed = {};
+    }
+    parsed[cacheKey] = entry;
+    fs.writeFileSync(FBO_REPLENISHMENT_CACHE_FILE, JSON.stringify(parsed, null, 2));
+  } catch (error) {
+    console.warn("[fbo-replenishment-cache:write]", error.message);
+  }
+}
+
+function compactFboReplenishmentData(data) {
+  return {
+    ...data,
+    compact: true,
+    items: (data.items || []).map((item) => ({
+      offer_id: item.offer_id,
+      product_id: item.product_id,
+      ozon_sku: item.ozon_sku,
+      title: item.title,
+      image_url: item.image_url,
+      fbo_stock: item.fbo_stock,
+      fbs_stock: item.fbs_stock,
+      stock_total: item.stock_total,
+      sales_7d: item.sales_7d,
+      sales_period: item.sales_period,
+      posting_units_period: item.posting_units_period,
+      avg_daily: item.avg_daily,
+      cover_days: item.cover_days,
+      target_days: item.target_days,
+      recommended_total: item.recommended_total,
+      recommended_demand_clusters: item.recommended_demand_clusters,
+      cluster_stock_total: item.cluster_stock_total,
+      suggestion: item.suggestion,
+      priority: item.priority
+    }))
+  };
+}
+
+async function listFboClusterReplenishment({ days = 30, targetDays = 30, offers = "", refresh = false, compact = false, background = false } = {}) {
+  const safeDays = Math.min(Math.max(Number(days) || 30, 1), 60);
+  const safeTargetDays = Math.min(Math.max(Number(targetDays) || 30, 7), 90);
+  const cacheKey = fboReplenishmentCacheKey({ days: safeDays, targetDays: safeTargetDays, offers });
+  const cached = readFboReplenishmentCache(cacheKey, { allowStale: true });
+  if (refresh && cached && !background) {
+    if (!fboReplenishmentRefreshes.has(cacheKey)) {
+      fboReplenishmentRefreshes.add(cacheKey);
+      listFboClusterReplenishment({ days: safeDays, targetDays: safeTargetDays, offers, refresh: true, compact: false, background: true })
+        .catch((error) => console.warn("[fbo-replenishment-refresh]", error.message))
+        .finally(() => fboReplenishmentRefreshes.delete(cacheKey));
+    }
+    const response = { ...cached, refresh_started: true };
+    return compact ? compactFboReplenishmentData(response) : response;
+  }
+  if (!refresh && cached) return compact ? compactFboReplenishmentData(cached) : cached;
+
+  const wantedOffers = new Set(
+    String(offers || "")
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean)
+  );
+  const productRows = await products.listProducts({ limit: 1000 });
+  const filteredProducts = wantedOffers.size
+    ? productRows.filter((product) => wantedOffers.has(String(product.offer_id || "")))
+    : productRows;
+
+  const { since, to, postings } = await fetchFboPostings({ days: safeDays });
+  const postingByOffer = summarizePostingsByOffer(postings, wantedOffers);
+  const stockSkus = new Set();
+  for (const product of filteredProducts) {
+    const offerId = String(product.offer_id || "");
+    const postingSummary = postingByOffer.get(offerId);
+    if (!postingSummary && !wantedOffers.size) continue;
+    if (product.ozon_sku) stockSkus.add(String(product.ozon_sku));
+    if (postingSummary?.ozon_sku) stockSkus.add(String(postingSummary.ozon_sku));
+  }
+  const clusterStockBySku = await fetchClusterStocksBySku(Array.from(stockSkus));
+  const results = [];
+
+  for (const product of filteredProducts) {
+    const offerId = String(product.offer_id || "");
+    if (!offerId) continue;
+    const metrics = await products.listMetrics(offerId, { days: safeDays });
+    const metricTotals = sumMetricRows(metrics);
+    const last7Totals = sumMetricRows(metrics.slice(-7));
+    const avg7 = metrics.length ? last7Totals.sales / Math.min(7, metrics.length) : 0;
+    const avgPeriod = metrics.length ? metricTotals.sales / metrics.length : 0;
+    const postingSummary = postingByOffer.get(offerId) || {
+      posting_units: 0,
+      clusters: {},
+      demand_clusters: {},
+      warehouse_clusters: {},
+      warehouses: {},
+      days: {}
+    };
+    const postingAvg = postingSummary.posting_units ? postingSummary.posting_units / safeDays : 0;
+    const dailyRate = Math.max(avg7, avgPeriod, postingAvg);
+    const ozonSku = String(product.ozon_sku || postingSummary.ozon_sku || "");
+    const clusterStocks = clusterStockBySku.get(ozonSku) || {};
+    const clusterStockTotal = Object.values(clusterStocks).reduce(
+      (sum, item) => sum + Number(item.available || 0),
+      0
+    );
+    const fboStock = clusterStockTotal || Number(product.fbo_stock || 0);
+    const fbsStock = Number(product.fbs_stock || 0);
+    const totalStock = fboStock + fbsStock;
+    const coverDays = dailyRate > 0 ? totalStock / dailyRate : null;
+    const targetStock = dailyRate > 0 ? Math.ceil(dailyRate * safeTargetDays) : 0;
+    const demandBuckets = postingSummary.demand_clusters || postingSummary.clusters || {};
+    const targetDemandClusters = allocateQuantity(targetStock, demandBuckets).map((item) => {
+      const stock = clusterStocks[item.key] || {};
+      const currentStock = Number(stock.available || 0);
+      const qty = Math.max(0, item.qty - currentStock);
+      return {
+        cluster: item.key,
+        qty,
+        target_qty: item.qty,
+        current_stock: currentStock,
+        valid_stock: Number(stock.valid || 0),
+        requested_stock: Number(stock.requested || 0),
+        transit_stock: Number(stock.transit || 0),
+        sales_basis: Number(demandBuckets[item.key] || 0)
+      };
+    });
+    const recommendedTotal = targetDemandClusters.reduce((sum, item) => sum + item.qty, 0);
+
+    let priority = 0;
+    let suggestion = "暂不补";
+    if (dailyRate > 0 && totalStock <= 0) {
+      priority = 100;
+      suggestion = "已断货：优先补FBO";
+    } else if (dailyRate >= 1 && coverDays !== null && coverDays < 7) {
+      priority = 90;
+      suggestion = "急补FBO，覆盖不足7天";
+    } else if (dailyRate >= 0.5 && coverDays !== null && coverDays < 14) {
+      priority = 75;
+      suggestion = "补FBO，覆盖不足14天";
+    } else if (metricTotals.sales > 0 && fboStock <= 0 && fbsStock > 0) {
+      priority = 70;
+      suggestion = "FBO为0：从FBS/现货补到FBO";
+    } else if (metricTotals.sales > 0 && coverDays !== null && coverDays < 21) {
+      priority = 55;
+      suggestion = "观察并小批补FBO";
+    }
+
+    const warehouseAllocations = allocateQuantity(recommendedTotal, postingSummary.warehouses).map((item) => ({
+      warehouse: item.key,
+      cluster: postingClusterOf(item.key),
+      qty: item.qty,
+      sales_basis: Number(postingSummary.warehouses[item.key] || 0)
+    }));
+    const clusterAllocations = allocateQuantity(recommendedTotal, postingSummary.clusters).map((item) => ({
+      cluster: item.key,
+      qty: item.qty,
+      sales_basis: Number(postingSummary.clusters[item.key] || 0)
+    }));
+    const demandClusterAllocations = targetDemandClusters.filter((item) => item.qty > 0);
+
+    if (priority > 0 || wantedOffers.size) {
+      results.push({
+        offer_id: offerId,
+        product_id: String(product.product_id || ""),
+        ozon_sku: ozonSku,
+        title: product.title || postingSummary.title || "",
+        image_url: product.image_url || "",
+        fbo_stock: fboStock,
+        fbs_stock: fbsStock,
+        stock_total: totalStock,
+        sales_7d: Number(last7Totals.sales.toFixed(2)),
+        sales_period: Number(metricTotals.sales.toFixed(2)),
+        posting_units_period: Number((postingSummary.posting_units || 0).toFixed(2)),
+        avg_daily: Number(dailyRate.toFixed(2)),
+        cover_days: coverDays === null ? null : Number(coverDays.toFixed(1)),
+        target_days: safeTargetDays,
+        recommended_total: recommendedTotal,
+        recommended_warehouses: warehouseAllocations,
+        recommended_clusters: clusterAllocations,
+        recommended_demand_clusters: demandClusterAllocations,
+        target_demand_clusters: targetDemandClusters,
+        cluster_stocks: clusterStocks,
+        cluster_stock_total: clusterStockTotal,
+        calculation_basis: "cluster_to demand share; target cluster stock minus current available_stock_count",
+        sales_warehouses: Object.fromEntries(Object.entries(postingSummary.warehouses || {}).sort((a, b) => b[1] - a[1])),
+        sales_clusters: Object.fromEntries(Object.entries(postingSummary.clusters || {}).sort((a, b) => b[1] - a[1])),
+        sales_demand_clusters: Object.fromEntries(Object.entries(postingSummary.demand_clusters || postingSummary.clusters || {}).sort((a, b) => b[1] - a[1])),
+        sales_warehouse_clusters: Object.fromEntries(Object.entries(postingSummary.warehouse_clusters || {}).sort((a, b) => b[1] - a[1])),
+        suggestion,
+        priority
+      });
+    }
+  }
+
+  const data = {
+    since,
+    to,
+    days: safeDays,
+    target_days: safeTargetDays,
+    postings_fetched: postings.length,
+    count: results.length,
+    items: results.sort(
+      (a, b) =>
+        b.priority - a.priority ||
+        b.sales_7d - a.sales_7d ||
+        b.sales_period - a.sales_period ||
+        b.recommended_total - a.recommended_total
+    )
+  };
+  writeFboReplenishmentCache(cacheKey, data);
+  return compact ? compactFboReplenishmentData(data) : data;
+}
+
+module.exports = {
+  buildOzonProductUpdatePreview,
+  getOzonProductCard,
+  listFinanceTransactions,
+  listFboClusterReplenishment,
+  previewOzonAnalytics,
+  submitOzonProductUpdate,
+  syncOzonMetrics,
+  syncOzonProducts
+};

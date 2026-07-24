@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>库存看板</title>
+    <link rel="stylesheet" href="./inventory.css?v=20260724-structure-restore" />
+    <link rel="stylesheet" href="/auth-shared.css?v=20260724-2">
+  <script src="/auth-guard.js?v=20260724-2"></script>
+</head>
+  <body>
+    <div class="app">
+      <header class="topbar">
+        <div class="title-block">
+          <h1>库存看板</h1>
+          <p id="syncText">正在加载库存数据...</p>
+        </div>
+        <div class="actions">
+          <input id="searchInput" type="search" placeholder="搜索 Ozon / WB 商品" />
+          <button class="secondary add-wb-product-btn" type="button" data-market="wb">新增WB本土商品</button>
+          <button class="secondary add-wb-product-btn" type="button" data-market="wb_cross">新增WB跨境商品</button>
+          <label class="toggle"><input id="showHiddenInput" type="checkbox" /> 显示已隐藏</label>
+          <button id="toggleShishengBtn" class="secondary" type="button">隐藏世晟仓库</button>
+          <button id="refreshBtn" type="button">刷新</button>
+          <a class="nav-link" href="./index.html">Ozon看板</a>
+        </div>
+      </header>
+
+      <section class="summary-strip" id="stats"></section>
+
+      <main class="inventory-shell">
+        <table class="inventory-matrix">
+          <colgroup>
+            <col class="matrix-product" />
+            <col class="matrix-barcode" />
+            <col class="matrix-standard" />
+            <col class="matrix-standard" />
+            <col class="matrix-standard" />
+            <col class="matrix-standard" />
+            <col class="matrix-warehouse" />
+            <col class="matrix-warehouse" />
+            <col class="matrix-ozon" />
+            <col class="matrix-warehouse" />
+            <col class="matrix-warehouse" />
+            <col class="matrix-warehouse shisheng-column" />
+            <col class="matrix-warehouse shisheng-column" />
+            <col class="matrix-ozon shisheng-column" />
+            <col class="matrix-warehouse shisheng-column" />
+            <col class="matrix-warehouse shisheng-column" />
+            <col class="matrix-standard" />
+            <col class="matrix-standard" />
+            <col class="matrix-first-leg" />
+            <col class="matrix-action" />
+          </colgroup>
+          <thead>
+            <tr>
+              <th rowspan="3" class="product-col">商品列表</th>
+              <th rowspan="3" class="barcode-col">条形码</th>
+              <th rowspan="3" class="total-col">商品总库存</th>
+              <th rowspan="3" class="stock-col group-start">FBO</th>
+              <th rowspan="3" class="stock-col">FBO在途</th>
+              <th rowspan="3" class="stock-col">FBW</th>
+              <th colspan="10" class="group-start group-title">FBS</th>
+              <th rowspan="3" class="stock-col group-start">未分配库存</th>
+              <th rowspan="3" class="shortage-col">缺货</th>
+              <th rowspan="3" class="first-leg-col">头程在途</th>
+              <th rowspan="3" class="action-col">操作</th>
+            </tr>
+            <tr>
+              <th colspan="5" class="group-start">林挺</th>
+              <th colspan="5" class="group-start shisheng-column">世晟</th>
+            </tr>
+            <tr>
+              <th class="warehouse-col group-start">总数</th>
+              <th class="warehouse-col">每日发货数</th>
+              <th class="warehouse-col ozon-fbs-col">Ozon</th>
+              <th class="warehouse-col">WB本土</th>
+              <th class="warehouse-col">WB跨境</th>
+              <th class="warehouse-col group-start shisheng-column">总数</th>
+              <th class="warehouse-col shisheng-column">每日发货数</th>
+              <th class="warehouse-col shisheng-column ozon-fbs-col">Ozon</th>
+              <th class="warehouse-col shisheng-column">WB本土</th>
+              <th class="warehouse-col shisheng-column">WB跨境</th>
+            </tr>
+          </thead>
+          <tbody id="productBody"></tbody>
+        </table>
+      </main>
+    </div>
+    <dialog id="addCardDialog" class="add-dialog">
+      <div class="add-dialog-card">
+        <div class="add-dialog-head">
+          <div>
+            <h2 id="addDialogTitle">新增 WB 商品卡</h2>
+            <p>用于 Ozon 未上架但 WB 已上架的商品，加入后会进入库存主表。</p>
+          </div>
+          <button id="closeAddDialogBtn" class="secondary" type="button">关闭</button>
+        </div>
+        <div class="add-dialog-search">
+          <input id="addCardSearchInput" type="search" placeholder="输入 nm_id / vendor_code / 商品名" />
+          <button id="searchAddCardBtn" type="button">搜索</button>
+        </div>
+        <div id="addCardResults" class="add-card-results"></div>
+      </div>
+    </dialog>
+    <div id="linkPopover" class="link-popover" hidden></div>
+    <div id="stockHistoryPopover" class="stock-history-popover" hidden></div>
+    <div id="toast" class="toast" hidden></div>
+    <script src="./inventory.js?v=20260724-stock-order-sync"></script>
+  </body>
+</html>
