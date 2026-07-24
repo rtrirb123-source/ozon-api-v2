@@ -676,11 +676,14 @@ function renderBusinessBoard() {
     const selectedSales = toNumber(totals.sales);
     const selectedRevenue = toNumber(totals.revenue);
     const avgPrice = selectedSales ? selectedRevenue / selectedSales : 0;
-    const title = $("wbBusinessTitle");
-    if (title) title.textContent = `${report.period?.label || "2026年6月"}：根据库存关系汇总表按条码SKU合并统计，数据源为本地Excel`;
-    const period = $("wbBusinessPeriod");
     const periodStart = String(report.period?.start || "");
     const periodMatch = periodStart.match(/^(\d{4})-(\d{2})/);
+    const periodLabel = periodMatch
+      ? `${periodMatch[1]}年${Number(periodMatch[2])}月`
+      : (report.period?.label || "经营期间");
+    const title = $("wbBusinessTitle");
+    if (title) title.textContent = `${periodLabel}：根据库存关系汇总表按条码SKU合并统计，数据源为本地Excel`;
+    const period = $("wbBusinessPeriod");
     if (period) period.textContent = periodMatch
       ? `${periodMatch[1]}年${Number(periodMatch[2])}月`
       : (report.period?.label || "经营期间");
