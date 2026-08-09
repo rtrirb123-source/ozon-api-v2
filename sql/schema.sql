@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS products (
   return_rate NUMERIC,
   ad_ratio NUMERIC,
   price NUMERIC,
+  front_price NUMERIC,
   competitor_compare TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -52,6 +53,9 @@ ADD COLUMN IF NOT EXISTS fbs_stock NUMERIC;
 
 ALTER TABLE products
 ADD COLUMN IF NOT EXISTS yesterday_sales NUMERIC;
+
+ALTER TABLE products
+ADD COLUMN IF NOT EXISTS front_price NUMERIC;
 
 CREATE INDEX IF NOT EXISTS products_updated_at_idx ON products (updated_at DESC);
 CREATE INDEX IF NOT EXISTS products_product_id_idx ON products (product_id);

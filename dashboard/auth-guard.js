@@ -66,7 +66,7 @@
       </nav>
       ${isOzonSection ? `
         <nav class="portal-ozon-subnav" aria-label="Ozon子看板">
-          <a class="${active("/index.html")}" href="/index.html">经营概览</a>
+          <a class="${active("/index.html")}" href="/index.html">销售看板</a>
           <a class="${active("/russia-operations.html")}" href="/russia-operations.html">Ozon经营看板</a>
           <a class="${active("/replenishment.html")}" href="/replenishment.html">补库存</a>
         </nav>` : ""}
