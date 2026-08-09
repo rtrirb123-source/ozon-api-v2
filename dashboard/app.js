@@ -188,6 +188,7 @@ function loadVisibleColumns() {
   }
   for (const column of columns.filter((item) => item.fixed)) state.visibleColumns.add(column.key);
   state.visibleColumns.add("tail_delivery_rate");
+  state.visibleColumns.add("front_price");
 }
 
 function saveVisibleColumns() {
