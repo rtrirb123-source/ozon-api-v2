@@ -5,6 +5,13 @@ const state = {
   metrics: [],
   storeMetrics: [],
   businessReport: null,
+  businessMonth: "",
+  businessMonths: [],
+  businessPage: 1,
+  businessPageSize: 20,
+  ozonCostBySku: new Map(),
+  usdToCny: 7.2,
+  logisticsFactorUsdKg: 3,
   selectedNmId: "",
   search: "",
   salesSort: "desc",
@@ -12,7 +19,10 @@ const state = {
   metricDate: defaultMetricDate(),
   timers: new Map(),
   statuses: new Map(),
-  rubToCny: 9.07 / 100
+  rubToCny: 9.07 / 100,
+  taxRate: 0.12,
+  collectionRate: 0.03,
+  exchangeRateUpdatedAt: ""
 };
 
 
@@ -30,6 +40,11 @@ function formatMoney(value) {
   return new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 0 }).format(toNumber(value)) + " ₽";
 }
 
+function formatCny(value) {
+  if (value === null || value === undefined || value === "" || !Number.isFinite(Number(value))) return "—";
+  return "¥" + Number(value).toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
 function dashboardUrl() {
   const date = formatDateKey(state.metricDate || defaultMetricDate());
   return `${API_BASE}/api/wb/dashboard?date=${encodeURIComponent(date)}`;
@@ -43,12 +58,115 @@ async function loadStoreMetrics() {
   renderRevenueTrend();
 }
 
-async function loadBusinessReport() {
-  const res = await fetch("./wb-june-business.json?v=20260724-june-business-1");
-  const payload = await res.json();
-  if (!res.ok) throw new Error("6月经营数据加载失败");
+function monthOffset(month, offset) {
+  const [year, monthNumber] = String(month).split("-").map(Number);
+  if (!year || !monthNumber) return "";
+  const date = new Date(Date.UTC(year, monthNumber - 1 + offset, 1));
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
+}
+
+function businessMonthLabel(month) {
+  const [year, monthNumber] = String(month).split("-");
+  return `${year}年${Number(monthNumber)}月`;
+}
+
+function availableBusinessMonths() {
+  return new Set(state.businessMonths.map(item => item.month));
+}
+
+function renderBusinessMonthControls() {
+  const select = $("wbBusinessMonthSelect");
+  const previous = $("wbBusinessPrevMonth");
+  const next = $("wbBusinessNextMonth");
+  if (!select) return;
+  const available = availableBusinessMonths();
+  const sorted = [...available].sort();
+  if (!sorted.length) {
+    select.innerHTML = '<option>该月份尚未同步</option>';
+    previous.disabled = true;
+    next.disabled = true;
+    return;
+  }
+  const current = new Date();
+  const currentMonth = `${current.getFullYear()}-${String(current.getMonth() + 1).padStart(2, "0")}`;
+  const endMonth = [sorted[sorted.length - 1], currentMonth].sort().pop();
+  const months = [];
+  for (let cursor = sorted[0]; cursor <= endMonth; cursor = monthOffset(cursor, 1)) months.push(cursor);
+  select.innerHTML = months.map(month => `
+    <option value="${month}" ${month === state.businessMonth ? "selected" : ""} ${available.has(month) ? "" : "disabled"}>
+      ${businessMonthLabel(month)}${available.has(month) ? "" : "（尚未同步）"}
+    </option>
+  `).join("");
+  const previousMonth = monthOffset(state.businessMonth, -1);
+  const nextMonth = monthOffset(state.businessMonth, 1);
+  previous.disabled = !available.has(previousMonth);
+  next.disabled = !available.has(nextMonth);
+  previous.title = previous.disabled ? "该月份尚未同步" : businessMonthLabel(previousMonth);
+  next.title = next.disabled ? "该月份尚未同步" : businessMonthLabel(nextMonth);
+}
+
+async function loadBusinessMonthIndex() {
+  try {
+    const response = await fetch("./data/wb-business/index.json?v=" + Date.now(), { cache: "no-store" });
+    if (!response.ok) throw new Error("月份索引加载失败");
+    const payload = await response.json();
+    state.businessMonths = Array.isArray(payload.months) ? payload.months : [];
+    const available = availableBusinessMonths();
+    if (!state.businessMonth || !available.has(state.businessMonth)) {
+      state.businessMonth = payload.latest || [...available].sort().pop() || "";
+    }
+  } catch {
+    state.businessMonths = [{ month: "2026-06" }];
+    state.businessMonth = state.businessMonth || "2026-06";
+  }
+  renderBusinessMonthControls();
+}
+
+async function loadBusinessReport(month = state.businessMonth) {
+  if (!month) throw new Error("该月份尚未同步");
+  state.businessMonth = month;
+  renderBusinessMonthControls();
+  const [reportResponse, costResponse, exchangeResponse, settingsResponse] = await Promise.all([
+    fetch(`./data/wb-business/wb-business-${month}.json?v=${Date.now()}`, { cache: "no-store" }),
+    fetch(`/api/wb/business-costs/${month}?v=${Date.now()}`, { cache: "no-store" }),
+    fetch("/api/exchange-rate", { cache: "no-store" }),
+    fetch("/api/wb/business/settings", { cache: "no-store" })
+  ]);
+  if (!reportResponse.ok) throw new Error(`${businessMonthLabel(month)}尚未同步`);
+  const payload = await reportResponse.json();
   state.businessReport = payload || null;
+
+  state.ozonCostBySku = new Map();
+  if (costResponse.ok) {
+    const costPayload = await costResponse.json();
+    for (const row of costPayload.rows || []) {
+      if (row.sku) state.ozonCostBySku.set(String(row.sku).trim().toLowerCase(), row);
+      if (row.offerId) state.ozonCostBySku.set(String(row.offerId).trim().toLowerCase(), row);
+    }
+  }
+  if (exchangeResponse.ok) {
+    const exchangePayload = await exchangeResponse.json();
+    const usdRate = Number(exchangePayload?.data?.usdToCny);
+    if (Number.isFinite(usdRate) && usdRate > 0) state.usdToCny = usdRate;
+  }
+  if (settingsResponse.ok) {
+    const settingsPayload = await settingsResponse.json();
+    const settings = settingsPayload?.data || {};
+    if (Number.isFinite(Number(settings.taxRate))) state.taxRate = Number(settings.taxRate);
+    if (Number.isFinite(Number(settings.collectionRate))) state.collectionRate = Number(settings.collectionRate);
+    if (Number.isFinite(Number(settings.logisticsFactorUsdKg))) {
+      state.logisticsFactorUsdKg = Number(settings.logisticsFactorUsdKg);
+    }
+    localStorage.removeItem("wbBusinessTaxRate");
+    localStorage.removeItem("wbBusinessCollectionRate");
+  }
   renderBusinessBoard();
+}
+
+async function loadBusinessData() {
+  if (window.dashboardAuthReady) await window.dashboardAuthReady;
+  await loadBusinessMonthIndex();
+  await loadBusinessReport(state.businessMonth);
 }
 
 function $(id) {
@@ -126,6 +244,7 @@ async function loadExchangeRate() {
     if (!res.ok) return;
     const payload = await res.json();
     if (payload?.data?.rubToCny) state.rubToCny = Number(payload.data.rubToCny);
+    state.exchangeRateUpdatedAt = payload?.data?.publishedAt || payload?.data?.updatedAt || "";
   } catch {}
 }
 
@@ -175,7 +294,6 @@ async function loadDashboard() {
   state.metricDate = formatDateKey(payload.data.summary?.selectedDate) || state.metricDate;
   if ($("metricDateInput")) $("metricDateInput").value = state.metricDate;
   loadStoreMetrics().catch(error => showToast(error.message));
-  loadBusinessReport().catch(error => showToast(error.message));
   render();
 
   $("syncText").textContent =
@@ -231,16 +349,15 @@ function expectedProfit(item) {
   const freightRate = toNumber(item.freight_rate);
 
   const commissionRub = priceRub * toNumber(item.commission_rate) / 100;
-  const adRub = priceRub * toNumber(item.ad_ratio) / 100;
   const returnRub = priceRub * toNumber(item.return_rate) / 100;
   const tailRub = priceRub * 0.14;
   const taxRub = priceRub * 0.12;
   const acquiringRub = priceRub * 0.02;
-  const remainingRub = priceRub - commissionRub - adRub - returnRub - tailRub - taxRub - acquiringRub;
+  const remainingRub = priceRub - commissionRub - returnRub - tailRub - taxRub - acquiringRub;
   const remittanceRub = remainingRub * 0.06;
 
   const incomeCny = priceRub * rubToCny;
-  const platformCny = (commissionRub + adRub + returnRub + tailRub + taxRub + acquiringRub + remittanceRub) * rubToCny;
+  const platformCny = (commissionRub + returnRub + tailRub + taxRub + acquiringRub + remittanceRub) * rubToCny;
   const firstMileCny = weightKg * freightRate * 7.2;
   return (incomeCny - platformCny - firstMileCny - purchaseCny - shippingCny).toFixed(2);
 }
@@ -329,7 +446,6 @@ function renderTable() {
       <th>运费系数</th>
       <th>退货率</th>
       <th>售价</th>
-      <th>广告比例</th>
       <th>预期利润</th>
       <th class="competitor-cell">竞品对比</th>
       <th>产品策略</th>
@@ -359,14 +475,13 @@ function renderTable() {
       <td>${renderInput(item, "freight_rate")}</td>
       <td>${renderInput(item, "return_rate")}</td>
       <td>${renderInput(item, "price")}</td>
-      <td>${renderInput(item, "ad_ratio")}</td>
       <td class="profit-cell">${escapeHtml(expectedProfit(item))}</td>
       <td class="competitor-cell">${renderText(item, "competitor_compare")}</td>
       <td>${renderText(item, "strategy")}</td>
     </tr>
   `);
 
-  $("productBody").innerHTML = rows.join("") || `<tr><td colspan="17">暂无 WB 商品数据。WB API 可能仍在限流，稍后点击“同步WB”。</td></tr>`;
+  $("productBody").innerHTML = rows.join("") || `<tr><td colspan="16">暂无 WB 商品数据。WB API 可能仍在限流，稍后点击“同步WB”。</td></tr>`;
 }
 
 function renderRevenueTrend() {
@@ -552,9 +667,40 @@ function renderBusinessTopProducts() {
   if (!node) return;
   const report = state.businessReport;
   const rows = report ? [...(report.rows || [])] : [...(state.products || [])];
-  rows
-    .sort((a, b) => toNumber(b.revenue || b.selected_revenue || 0) - toNumber(a.revenue || a.selected_revenue || 0))
-    .slice(0, 8);
+  const profitForItem = item => {
+    if (!report) return toNumber(item.expected_profit || 0);
+    const key = String(item.ozonSku || item.ourSku || "").trim().toLowerCase();
+    const cost = state.ozonCostBySku.get(key);
+    const retail = item.retailRevenue === null || item.retailRevenue === undefined || item.retailRevenue === ""
+      ? null
+      : Number(item.retailRevenue);
+    if (!cost || retail === null || !Number.isFinite(Number(cost.purchaseCost)) || !Number.isFinite(Number(cost.weightG))) return null;
+    const linkedIds = Array.from(new Set(
+      String(item.wbLocalLinks || "")
+        .split(/\r?\n/)
+        .map(line => line.match(/\/\s*(\d+)(?:\s*\/|$)/)?.[1] || "")
+        .filter(Boolean)
+    ));
+    const shipping = linkedIds.reduce((value, nmId) => {
+      if (value !== null) return value;
+      const product = state.products.find(entry => String(entry.nm_id) === String(nmId));
+      return product && product.shipping_cost !== null && product.shipping_cost !== undefined && product.shipping_cost !== ""
+        ? Number(product.shipping_cost)
+        : null;
+    }, null) || 0;
+    const firstLeg = Number(cost.weightG) / 1000 * state.logisticsFactorUsdKg * state.usdToCny;
+    const volume = toNumber(item.netSales ?? item.sales);
+    const landed = (Number(cost.purchaseCost) + firstLeg + shipping) * volume;
+    const received = (toNumber(item.finalPayout ?? item.payable) - retail * state.taxRate) * (1 - state.collectionRate) * state.rubToCny;
+    return received - landed;
+  };
+  rows.forEach(item => {
+    item._businessGrossProfit = profitForItem(item);
+  });
+  rows.sort((a, b) =>
+    (b._businessGrossProfit === null ? -Infinity : b._businessGrossProfit)
+    - (a._businessGrossProfit === null ? -Infinity : a._businessGrossProfit)
+  );
   if (!rows.length) {
     node.innerHTML = '<div class="trend-empty">暂无商品排行数据</div>';
     return;
@@ -562,11 +708,11 @@ function renderBusinessTopProducts() {
 
   const topRows = rows.slice(0, 8);
   node.innerHTML = `
-    <div class="chart-title">${report ? "6月销售额 Top 8" : "当前日期销售额 Top 8"}</div>
+    <div class="chart-title">${report ? `${businessMonthLabel(state.businessMonth)}毛利润 Top 8` : "当前日期利润 Top 8"}</div>
     <div class="wb-product-grid">
       ${topRows.map((item, index) => {
-        const revenue = toNumber(item.revenue || item.selected_revenue || 0);
-        const sales = toNumber(item.sales ?? item.selected_sales ?? item.yesterday_sales ?? 0);
+        const profit = item._businessGrossProfit;
+        const sales = toNumber(item.netSales ?? item.sales ?? item.selected_sales ?? item.yesterday_sales ?? 0);
         const title = item.barcodeSku || item.vendor_code || item.ourSku || item.title || item.nm_id;
         const imageUrl = item.imageUrl || item.image_url || "";
         return `
@@ -576,7 +722,7 @@ function renderBusinessTopProducts() {
               ? `<img src="${escapeHtml(imageUrl)}" alt="${escapeHtml(title)}" loading="lazy" />`
               : `<div class="wb-product-placeholder">暂无图片</div>`}
             <strong title="${escapeHtml(title)}">${escapeHtml(title)}</strong>
-            <span>${formatMoney(revenue)}</span>
+            <span>${formatCny(profit)}</span>
             <small>${sales} 件</small>
           </article>
         `;
@@ -594,14 +740,15 @@ function renderBusinessCostChart(report) {
   }
   const totals = report.totals || {};
   const bars = [
-    ["费用合计", totals.fees],
     ["物流相关费用", totals.logisticsFees],
     ["仓储费", totals.storageFees],
-    ["扣款/罚款/验收费", totals.penaltyFees]
+    ["验收费", totals.acceptanceFees],
+    ["扣款", totals.deductions],
+    ["罚款", totals.fines]
   ];
   const max = Math.max(1, ...bars.map(([, value]) => Math.abs(toNumber(value))));
   node.innerHTML = `
-    <div class="chart-title">6月费用结构</div>
+    <div class="chart-title">${businessMonthLabel(state.businessMonth)}费用结构</div>
     <div class="business-cost-bars">
       ${bars.map(([label, value]) => {
         const amount = toNumber(value);
@@ -618,79 +765,446 @@ function renderBusinessCostChart(report) {
   `;
 }
 
-function renderBusinessDetailTable(report) {
+function renderBusinessDetailTable(report, options = {}) {
   const node = $("wbBusinessTable");
   if (!node) return;
+  const previousShell = options.preserveScroll ? node.querySelector(".business-table-shell") : null;
+  const scrollSnapshot = options.preserveScroll
+    ? {
+        pageX: window.scrollX,
+        pageY: window.scrollY,
+        tableLeft: previousShell?.scrollLeft || 0,
+        tableTop: previousShell?.scrollTop || 0
+      }
+    : null;
   if (!report || !(report.rows || []).length) {
     node.innerHTML = "";
     return;
   }
-  const rows = (report.rows || []).slice(0, 20);
+  const allRows = report.rows || [];
+  const rows = allRows;
+  const totals = report.totals || {};
+  const businessCost = (item) => state.ozonCostBySku.get(String(item.ozonSku || item.ourSku || "").trim().toLowerCase()) || null;
+  const firstLeg = (cost) => {
+    if (!cost || cost.weightG === null || cost.weightG === "" || !Number.isFinite(Number(cost.weightG))) return null;
+    return Number(cost.weightG) / 1000 * state.logisticsFactorUsdKg * state.usdToCny;
+  };
+  const linkedNmIds = (item) => Array.from(new Set(
+    String(item.wbLocalLinks || "")
+      .split(/\r?\n/)
+      .map(line => line.match(/\/\s*(\d+)(?:\s*\/|$)/)?.[1] || "")
+      .filter(Boolean)
+  ));
+  const shippingCost = (item) => {
+    for (const nmId of linkedNmIds(item)) {
+      const product = state.products.find(entry => String(entry.nm_id) === String(nmId));
+      if (product && product.shipping_cost !== null && product.shipping_cost !== undefined && product.shipping_cost !== "") {
+        return Number(product.shipping_cost);
+      }
+    }
+    return "";
+  };
+  const retailSales = (item) => (
+    item.retailRevenue === null || item.retailRevenue === undefined || item.retailRevenue === ""
+      ? null
+      : Number(item.retailRevenue)
+  );
+  const receivedAmount = (item) => {
+    const retail = retailSales(item);
+    if (retail === null) return null;
+    return (
+      (toNumber(item.finalPayout ?? item.payable) - retail * state.taxRate)
+      * (1 - state.collectionRate)
+      * state.rubToCny
+    );
+  };
+  const landedTotal = (item, cost) => {
+    const purchase = cost?.purchaseCost;
+    const firstLegCost = firstLeg(cost);
+    if (purchase === null || purchase === undefined || purchase === "" || !Number.isFinite(Number(purchase)) || firstLegCost === null) {
+      return null;
+    }
+    return (Number(purchase) + Number(firstLegCost) + Number(shippingCost(item) || 0)) * toNumber(item.netSales ?? item.sales);
+  };
+  const grossProfit = (item, cost) => {
+    const received = receivedAmount(item);
+    const landed = landedTotal(item, cost);
+    if (received === null || landed === null) return null;
+    return received - landed;
+  };
+  const unitGrossProfit = (item, cost) => {
+    const profit = grossProfit(item, cost);
+    const sales = toNumber(item.netSales ?? item.sales);
+    if (profit === null || sales <= 0) return null;
+    return profit / sales;
+  };
+  const profitClass = (value) => {
+    if (value === null) return "";
+    return Number(value) >= 0 ? "business-profit-positive" : "business-profit-negative";
+  };
+  const payoutTotal = toNumber(totals.backendPayableTotal || totals.finalPayout);
+  const grossProfitValues = allRows
+    .map(item => grossProfit(item, businessCost(item)))
+    .filter(value => value !== null);
+  const unmatchedReceivedAdjustment =
+    toNumber(totals.unmatchedFinanceNet)
+    * (1 - state.collectionRate)
+    * state.rubToCny;
+  const grossProfitTotal =
+    grossProfitValues.reduce((sum, value) => sum + value, 0)
+    + unmatchedReceivedAdjustment;
+  const includedRows = allRows.filter(item => grossProfit(item, businessCost(item)) !== null);
+  const includedFinalPayoutRub = includedRows.reduce(
+    (sum, item) => sum + toNumber(item.finalPayout ?? item.payable),
+    0
+  );
+  const includedRetailRevenueRub = includedRows.reduce(
+    (sum, item) => sum + toNumber(retailSales(item)),
+    0
+  );
+  const taxRub = includedRetailRevenueRub * state.taxRate;
+  const afterTaxRub = includedFinalPayoutRub - taxRub;
+  const collectionFeeRub = afterTaxRub * state.collectionRate;
+  const matchedNetRub = afterTaxRub - collectionFeeRub;
+  const matchedReceivedCny = matchedNetRub * state.rubToCny;
+  const unmatchedNetRub =
+    toNumber(totals.unmatchedFinanceNet) * (1 - state.collectionRate);
+  const storeReceivedRub = matchedNetRub + unmatchedNetRub;
+  const purchaseTotalCny = includedRows.reduce((sum, item) => {
+    const cost = businessCost(item);
+    return sum + Number(cost.purchaseCost) * toNumber(item.netSales ?? item.sales);
+  }, 0);
+  const firstLegTotalCny = includedRows.reduce((sum, item) => {
+    const cost = businessCost(item);
+    return sum + Number(firstLeg(cost)) * toNumber(item.netSales ?? item.sales);
+  }, 0);
+  const shippingTotalCny = includedRows.reduce(
+    (sum, item) => sum + Number(shippingCost(item) || 0) * toNumber(item.netSales ?? item.sales),
+    0
+  );
+  const landedTotalCny = purchaseTotalCny + firstLegTotalCny + shippingTotalCny;
+  const retailTotalNode = $("wbBusinessRetailTotal");
+  const grossTotalNode = $("wbBusinessGrossTotal");
+  if (retailTotalNode) retailTotalNode.textContent = formatMoney(payoutTotal);
+  if (grossTotalNode) {
+    grossTotalNode.textContent = grossProfitValues.length ? formatCny(grossProfitTotal) : "—";
+    grossTotalNode.className = grossProfitValues.length
+      ? (grossProfitTotal >= 0 ? "summary-profit-positive" : "summary-profit-negative")
+      : "";
+    grossTotalNode.title = `已计入 ${grossProfitValues.length}/${allRows.length} 个成本完整商品；未匹配WB财务净额按回款手续费和汇率折算后，调整 ${formatCny(unmatchedReceivedAdjustment)}`;
+  }
   node.innerHTML = `
-    <div class="business-table-title">6月按条码SKU合并明细 Top 20</div>
+    <div class="business-relation" aria-label="结算关系说明">
+      <div>
+        <strong>金额关系</strong>
+        <span>最终回款 = 应付卖家 − 物流费用 − 仓储费 − 验收费 − 扣款 − 罚款 + 其他补款/调整</span>
+      </div>
+      <div class="business-relation-values">
+        <span>${formatMoney(totals.payable)}</span><b>−</b>
+        <span>${formatMoney(totals.logisticsFees)}</span><b>−</b>
+        <span>${formatMoney(totals.storageFees)}</span><b>−</b>
+        <span>${formatMoney(totals.acceptanceFees)}</span><b>−</b>
+        <span>${formatMoney(totals.deductions)}</span><b>−</b>
+        <span>${formatMoney(totals.fines)}</span><b>+</b>
+        <span>${formatMoney(totals.otherAdjustments)}</span><b>=</b>
+        <strong>${formatMoney(totals.finalPayout)}</strong>
+      </div>
+      <div>
+        <strong>后台总对账</strong>
+        <span>已匹配条码SKU最终回款 + 未匹配WB财务净额 = WB后台应付总额</span>
+      </div>
+      <div class="business-relation-values">
+        <span>${formatMoney(totals.finalPayout)}</span><b>+</b>
+        <span>${formatMoney(totals.unmatchedFinanceNet)}</span><b>=</b>
+        <strong>${formatMoney(totals.backendPayableTotal)}</strong>
+        <span>（差异 ${formatMoney(totals.reconciliationDifference)}）</span>
+      </div>
+      <small>全部金额直接取自 NAS 最新月度报告；rebillLogisticCost 仅作参考分析，不参与 WB 后台应付总额主对账。销量为已交付数量，经营成本和单品毛利按净交付数量计算。</small>
+    </div>
+    <details class="business-profit-breakdown">
+      <summary>
+        <span><strong>店铺利润计算过程</strong>（点击展开）</span>
+        <strong class="${profitClass(grossProfitTotal)}">${formatCny(grossProfitTotal)}</strong>
+      </summary>
+      <div class="business-profit-formula">
+        <div>
+          <strong>① WB销售税费</strong>
+          <span>零售销售额 ${formatMoney(totals.retailRevenue || includedRetailRevenueRub)} × ${(state.taxRate * 100).toFixed(1)}%</span>
+          <b>= ${formatMoney(taxRub)}</b>
+        </div>
+        <div>
+          <strong>② 后台应付总额</strong>
+          <span>已匹配最终回款 ${formatMoney(includedFinalPayoutRub)} + 未匹配财务净额 ${formatMoney(totals.unmatchedFinanceNet)}</span>
+          <b>= ${formatMoney(totals.backendPayableTotal)}</b>
+        </div>
+        <div>
+          <strong>③ 扣税后回款</strong>
+          <span>后台应付总额 ${formatMoney(totals.backendPayableTotal)} − 税费 ${formatMoney(taxRub)}</span>
+          <b>= ${formatMoney(storeReceivedRub / (1 - state.collectionRate))}</b>
+        </div>
+        <div>
+          <strong>④ 回款手续费</strong>
+          <span>扣税后回款 ${formatMoney(storeReceivedRub / (1 - state.collectionRate))} × ${(state.collectionRate * 100).toFixed(1)}%</span>
+          <b>= ${formatMoney(storeReceivedRub / (1 - state.collectionRate) * state.collectionRate)}</b>
+        </div>
+        <div>
+          <strong>⑤ 店铺到账（卢布）</strong>
+          <span>扣税后回款 ${formatMoney(storeReceivedRub / (1 - state.collectionRate))} − 回款手续费 ${formatMoney(storeReceivedRub / (1 - state.collectionRate) * state.collectionRate)}</span>
+          <b>= ${formatMoney(storeReceivedRub)}</b>
+        </div>
+        <div>
+          <strong>⑥ 店铺到账（人民币）</strong>
+          <span>店铺到账 ${formatMoney(storeReceivedRub)} × 卢布兑人民币汇率 ${state.rubToCny.toFixed(4)}</span>
+          <b>= ${formatCny(storeReceivedRub * state.rubToCny)}</b>
+        </div>
+        <div>
+          <strong>⑦ 采购成本</strong>
+          <span>各商品单件采购成本 × 净交付数量后汇总</span>
+          <b>= ${formatCny(purchaseTotalCny)}</b>
+        </div>
+        <div>
+          <strong>⑧ 头程费用</strong>
+          <span>各商品重量kg × ${state.logisticsFactorUsdKg}美元/kg × 美元汇率 ${state.usdToCny.toFixed(4)} × 净交付数量后汇总</span>
+          <b>= ${formatCny(firstLegTotalCny)}</b>
+        </div>
+        <div>
+          <strong>⑨ 海外仓发货成本</strong>
+          <span>各商品单件海外仓发货成本 × 净交付数量后汇总</span>
+          <b>= ${formatCny(shippingTotalCny)}</b>
+        </div>
+        <div>
+          <strong>⑩ 到俄总成本</strong>
+          <span>采购成本 ${formatCny(purchaseTotalCny)} + 头程费用 ${formatCny(firstLegTotalCny)} + 海外仓发货成本 ${formatCny(shippingTotalCny)}</span>
+          <b>= ${formatCny(landedTotalCny)}</b>
+        </div>
+        <div class="business-profit-result">
+          <strong>⑪ 店铺总毛利</strong>
+          <span>店铺到账 ${formatCny(storeReceivedRub * state.rubToCny)} − 到俄总成本 ${formatCny(landedTotalCny)}</span>
+          <b>= ${formatCny(grossProfitTotal)}</b>
+        </div>
+      </div>
+      <small>本次计入 ${includedRows.length}/${allRows.length} 个采购成本和重量完整的商品；海外仓发货成本未填写时暂按 ¥0 计算。税费、回款手续费或汇率修改后，本计算过程会同步刷新。</small>
+    </details>
+    <div class="business-table-toolbar">
+      <div class="business-table-title">${businessMonthLabel(state.businessMonth)}按条码SKU合并明细（共 ${allRows.length} 个）</div>
+      <span class="business-single-page-note">全部商品单页显示</span>
+    </div>
     <div class="business-table-shell">
       <table class="business-table">
         <thead>
           <tr>
             <th>图片</th>
             <th>条码SKU</th>
-            <th>我们的SKU</th>
-            <th>WB销量</th>
-            <th>WB销售额</th>
-            <th>应付卖家</th>
-            <th>费用合计</th>
-            <th>物流相关费用</th>
+            <th><span>采购成本</span><small>（人民币/件）</small></th>
+            <th><span>头程费用</span><small>（人民币/件）</small></th>
+            <th><span>海外仓发货成本</span><small>（人民币/件）</small></th>
+            <th>已交付</th>
+            <th>退货</th>
+            <th>净交付</th>
+            <th title="（采购成本 + 头程费用 + 海外仓发货成本）× 净交付数量"><span>到俄总成本</span><small>（人民币）</small></th>
+            <th title="来源：NAS更新版WB统计文档，按条码SKU汇总零售价销售额">WB零售价销售额（卢布）</th>
+            <th title="（最终回款 − 零售销售额 × 税费系数）×（1 − 回款系数）× 卢布兑人民币汇率">到账金额（人民币）</th>
+            <th class="business-profit-heading" title="到账金额 − 到俄总成本">毛利（人民币）</th>
+            <th class="business-profit-heading" title="毛利 ÷ 净交付数量">单件毛利（人民币/件）</th>
+            <th>WB销售额（卢布）</th>
+            <th>应付卖家（卢布）</th>
+            <th>物流费用</th>
+            <th>仓储费</th>
+            <th>验收费</th>
+            <th>扣款</th>
+            <th>罚款</th>
+            <th>其他补款/调整</th>
+            <th>最终回款</th>
+            <th>财务明细行</th>
             <th>关联商品</th>
           </tr>
         </thead>
         <tbody>
-          ${rows.map(item => `
+          ${rows.map(item => {
+            const cost = businessCost(item);
+            const nmIds = linkedNmIds(item);
+            const itemGrossProfit = grossProfit(item, cost);
+            const itemUnitGrossProfit = unitGrossProfit(item, cost);
+            return `
             <tr>
               <td>${item.imageUrl ? `<img class="business-thumb" src="${escapeHtml(item.imageUrl)}" alt="">` : ""}</td>
               <td><strong>${escapeHtml(item.barcodeSku)}</strong></td>
-              <td>${escapeHtml(item.ourSku)}</td>
-              <td>${toNumber(item.sales).toLocaleString("ru-RU")}</td>
+              <td title="${cost ? `来源：Ozon经营看板 ${escapeHtml(cost.offerId || cost.sku || "")}` : "Ozon经营看板未匹配"}">${formatCny(cost?.purchaseCost)}</td>
+              <td title="${cost ? `重量 ${toNumber(cost.weightG)}g × ${state.logisticsFactorUsdKg}美元/kg × 汇率 ${state.usdToCny.toFixed(4)}` : "Ozon经营看板未匹配"}">${formatCny(firstLeg(cost))}</td>
+              <td>
+                <input class="business-shipping-input" type="number" min="0" step="0.01"
+                  data-business-shipping="${escapeHtml(item.barcodeSku)}"
+                  data-business-nm-ids="${escapeHtml(nmIds.join(","))}"
+                  value="${escapeHtml(shippingCost(item))}" placeholder="手填" ${nmIds.length ? "" : "disabled"}>
+                <small class="business-save-status" data-business-save-status="${escapeHtml(item.barcodeSku)}">${nmIds.length ? "" : "未关联WB商品"}</small>
+              </td>
+              <td>${toNumber(item.delivered ?? item.sales).toLocaleString("ru-RU")}</td>
+              <td>${toNumber(item.returns).toLocaleString("ru-RU")}</td>
+              <td>${toNumber(item.netSales ?? item.sales).toLocaleString("ru-RU")}</td>
+              <td class="business-landed-total" title="（采购成本 + 头程费用 + 海外仓发货成本）× 净交付数量">${formatCny(landedTotal(item, cost))}</td>
+              <td class="business-retail-sales" title="来源：NAS更新版WB统计文档；不参与应付卖家财务对账">${retailSales(item) === null ? "—" : formatMoney(retailSales(item))}</td>
+              <td class="business-received-amount" title="（${formatMoney(item.finalPayout)} − 零售销售额 ${formatMoney(retailSales(item))} × ${(state.taxRate * 100).toFixed(1)}%）×（1 − ${(state.collectionRate * 100).toFixed(1)}%）× ${state.rubToCny.toFixed(4)}">${formatCny(receivedAmount(item))}</td>
+              <td class="business-profit-cell ${profitClass(itemGrossProfit)}" title="到账金额 − 到俄总成本">${formatCny(itemGrossProfit)}</td>
+              <td class="business-profit-cell ${profitClass(itemUnitGrossProfit)}" title="毛利率 ÷ WB销量">${formatCny(itemUnitGrossProfit)}</td>
               <td>${formatMoney(item.revenue)}</td>
               <td>${formatMoney(item.payable)}</td>
-              <td>${formatMoney(item.fees)}</td>
               <td>${formatMoney(item.logisticsFees)}</td>
+              <td>${formatMoney(item.storageFees)}</td>
+              <td>${formatMoney(item.acceptanceFees)}</td>
+              <td>${formatMoney(item.deductions)}</td>
+              <td>${formatMoney(item.fines)}</td>
+              <td>${formatMoney(item.otherAdjustments)}</td>
+              <td><strong>${formatMoney(item.finalPayout)}</strong></td>
+              <td>${toNumber(item.detailRows).toLocaleString("ru-RU")}</td>
               <td class="business-links">${escapeHtml(item.wbLocalLinks || "")}</td>
             </tr>
-          `).join("")}
+          `;
+          }).join("")}
         </tbody>
       </table>
     </div>
   `;
+  if (scrollSnapshot) {
+    const restoreScroll = () => {
+      const currentShell = node.querySelector(".business-table-shell");
+      if (currentShell) {
+        currentShell.scrollLeft = scrollSnapshot.tableLeft;
+        currentShell.scrollTop = scrollSnapshot.tableTop;
+      }
+      window.scrollTo({
+        left: scrollSnapshot.pageX,
+        top: scrollSnapshot.pageY,
+        behavior: "auto"
+      });
+    };
+    restoreScroll();
+    requestAnimationFrame(restoreScroll);
+  }
+  node.querySelectorAll("[data-business-shipping]").forEach(input => {
+    input.addEventListener("change", async () => {
+      const nmIds = String(input.dataset.businessNmIds || "").split(",").filter(Boolean);
+      const status = node.querySelector(`[data-business-save-status="${CSS.escape(input.dataset.businessShipping)}"]`);
+      const value = input.value === "" ? null : Number(input.value);
+      if (!nmIds.length || (value !== null && (!Number.isFinite(value) || value < 0))) return;
+      input.disabled = true;
+      if (status) status.textContent = "保存中…";
+      try {
+        const results = await Promise.all(nmIds.map(nmId => fetch(`${API_BASE}/api/wb/products/${encodeURIComponent(nmId)}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ shipping_cost: value })
+        })));
+        if (results.some(response => !response.ok)) throw new Error("保存失败");
+        for (const nmId of nmIds) {
+          const product = state.products.find(entry => String(entry.nm_id) === String(nmId));
+          if (product) product.shipping_cost = value;
+        }
+        if (status) status.textContent = `已保存到 ${nmIds.length} 个关联商品`;
+        renderBusinessDetailTable(report, { preserveScroll: true });
+        renderBusinessTopProducts();
+      } catch (error) {
+        if (status) status.textContent = error.message;
+      } finally {
+        input.disabled = false;
+      }
+    });
+  });
+}
+
+function syncBusinessCalculationControls() {
+  const taxInput = $("wbTaxRateInput");
+  const collectionInput = $("wbCollectionRateInput");
+  const exchangeInput = $("wbRubToCnyInput");
+  const canEdit = window.dashboardUser?.role === "admin";
+
+  const saveSettings = async (patch) => {
+    const response = await fetch("/api/wb/business/settings", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(patch),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || !payload.ok) throw new Error(payload.error || "经营参数保存失败");
+    return payload.data || {};
+  };
+
+  if (taxInput) {
+    taxInput.value = (state.taxRate * 100).toFixed(1);
+    taxInput.disabled = !canEdit;
+    taxInput.title = canEdit ? "修改后对所有账号统一生效" : "经营参数由管理员统一设置";
+    taxInput.onchange = async () => {
+      const value = Number(taxInput.value);
+      if (!Number.isFinite(value) || value < 0 || value > 100) {
+        taxInput.value = (state.taxRate * 100).toFixed(1);
+        return;
+      }
+      try {
+        const settings = await saveSettings({ taxRate: value / 100 });
+        state.taxRate = Number(settings.taxRate);
+        renderBusinessDetailTable(state.businessReport);
+        renderBusinessTopProducts();
+      } catch (error) {
+        taxInput.value = (state.taxRate * 100).toFixed(1);
+        showToast(error.message);
+      }
+    };
+  }
+  if (collectionInput) {
+    collectionInput.value = (state.collectionRate * 100).toFixed(1);
+    collectionInput.disabled = !canEdit;
+    collectionInput.title = canEdit ? "修改后对所有账号统一生效" : "经营参数由管理员统一设置";
+    collectionInput.onchange = async () => {
+      const value = Number(collectionInput.value);
+      if (!Number.isFinite(value) || value < 0 || value > 100) {
+        collectionInput.value = (state.collectionRate * 100).toFixed(1);
+        return;
+      }
+      try {
+        const settings = await saveSettings({ collectionRate: value / 100 });
+        state.collectionRate = Number(settings.collectionRate);
+        renderBusinessDetailTable(state.businessReport);
+        renderBusinessTopProducts();
+      } catch (error) {
+        collectionInput.value = (state.collectionRate * 100).toFixed(1);
+        showToast(error.message);
+      }
+    };
+  }
+  if (exchangeInput) {
+    exchangeInput.value = state.rubToCny.toFixed(4);
+    exchangeInput.title = state.exchangeRateUpdatedAt
+      ? `中国银行汇率，更新时间：${new Date(state.exchangeRateUpdatedAt).toLocaleString()}`
+      : "中国银行卢布兑人民币汇率";
+  }
 }
 
 function renderBusinessBoard() {
   const stats = $("wbBusinessStats");
   if (!stats) return;
+  syncBusinessCalculationControls();
 
   const report = state.businessReport;
   if (report) {
     const totals = report.totals || {};
-    const selectedSales = toNumber(totals.sales);
-    const selectedRevenue = toNumber(totals.revenue);
-    const avgPrice = selectedSales ? selectedRevenue / selectedSales : 0;
+    const netSales = toNumber(totals.netSales ?? totals.sales);
+    const delivered = toNumber(totals.delivered ?? (netSales + toNumber(totals.returns)));
+    const returnRate = delivered ? toNumber(totals.returns) / delivered : 0;
+    const payoutRate = toNumber(totals.payable) ? toNumber(totals.backendPayableTotal ?? totals.finalPayout) / toNumber(totals.payable) : 0;
     const periodStart = String(report.period?.start || "");
     const periodMatch = periodStart.match(/^(\d{4})-(\d{2})/);
     const periodLabel = periodMatch
       ? `${periodMatch[1]}年${Number(periodMatch[2])}月`
       : (report.period?.label || "经营期间");
     const title = $("wbBusinessTitle");
-    if (title) title.textContent = `${periodLabel}：根据库存关系汇总表按条码SKU合并统计，数据源为本地Excel`;
-    const period = $("wbBusinessPeriod");
-    if (period) period.textContent = periodMatch
-      ? `${periodMatch[1]}年${Number(periodMatch[2])}月`
-      : (report.period?.label || "经营期间");
+    if (title) title.textContent = `${periodLabel}：NAS 最新月度报告，按条码SKU汇总；利润成本按净交付数量计算`;
+    renderBusinessMonthControls();
     stats.innerHTML = [
-      renderBusinessStat("6月销量", `${selectedSales.toLocaleString("ru-RU")} 件`, "Excel：库存关系汇总"),
-      renderBusinessStat("6月销售额", formatMoney(selectedRevenue), "按条码SKU合并"),
-      renderBusinessStat("应付卖家", formatMoney(totals.payable), "财务明细汇总"),
-      renderBusinessStat("费用合计", formatMoney(totals.fees), "平台/服务等费用"),
-      renderBusinessStat("均价", formatMoney(avgPrice), "销售额 / 销量"),
-      renderBusinessStat("合并SKU数", `${toNumber(totals.itemCount).toLocaleString("ru-RU")} 个`, "库存看板关系")
+      renderBusinessStat("6月销量", `${netSales.toLocaleString("ru-RU")} 件`, `净交付口径：已交付 ${delivered.toLocaleString("ru-RU")} − 退货 ${toNumber(totals.returns).toLocaleString("ru-RU")}`),
+      renderBusinessStat("WB后台应付总额", formatMoney(totals.backendPayableTotal ?? totals.finalPayout), "已匹配最终回款 + 未匹配财务净额"),
+      renderBusinessStat("零售销售额", formatMoney(totals.retailRevenue), "NAS报告按条码SKU汇总"),
+      renderBusinessStat("退货率", `${(returnRate * 100).toFixed(1)}%`, "退货数量 / 已交付数量"),
+      renderBusinessStat("结算率", `${(payoutRate * 100).toFixed(1)}%`, "最终回款 / 应付卖家"),
+      renderBusinessStat("经营SKU", `${toNumber(totals.itemCount).toLocaleString("ru-RU")} 个`, `${toNumber(totals.activeItemCount).toLocaleString("ru-RU")} 个有交付`)
     ].join("");
     renderBusinessCostChart(report);
     renderBusinessTopProducts();
@@ -707,13 +1221,6 @@ function renderBusinessBoard() {
   const activeProducts = (state.products || []).filter(item => toNumber(item.selected_sales ?? item.yesterday_sales ?? 0) > 0).length;
   const title = $("wbBusinessTitle");
   if (title) title.textContent = `当前日期：${summary.selectedDate || state.metricDate || "-"}；近 30 天趋势来自 WB 本土店铺数据`;
-  const period = $("wbBusinessPeriod");
-  const selectedDate = String(summary.selectedDate || state.metricDate || "");
-  const selectedMatch = selectedDate.match(/^(\d{4})-(\d{2})/);
-  if (period) period.textContent = selectedMatch
-    ? `${selectedMatch[1]}年${Number(selectedMatch[2])}月`
-    : "当前经营期间";
-
   stats.innerHTML = [
     renderBusinessStat("当前销量", `${selectedSales.toLocaleString("ru-RU")} 件`, "按当前选择日期"),
     renderBusinessStat("当前销售额", formatMoney(selectedRevenue), "按当前选择日期"),
@@ -904,6 +1411,28 @@ document.getElementById("syncWbBtn")?.addEventListener("click", syncWb);
 $("syncStatusRefreshBtn")?.addEventListener("click", () => loadSyncStatus().catch(error => showToast(error.message)));
 document.getElementById("syncWbStockBtn")?.addEventListener("click", syncWbStocks);
 
+$("wbBusinessMonthSelect")?.addEventListener("change", event => {
+  const month = event.target.value;
+  if (!availableBusinessMonths().has(month)) {
+    showToast("该月份尚未同步");
+    renderBusinessMonthControls();
+    return;
+  }
+  loadBusinessReport(month).catch(error => showToast(error.message));
+});
+
+$("wbBusinessPrevMonth")?.addEventListener("click", () => {
+  const month = monthOffset(state.businessMonth, -1);
+  if (!availableBusinessMonths().has(month)) return showToast("该月份尚未同步");
+  loadBusinessReport(month).catch(error => showToast(error.message));
+});
+
+$("wbBusinessNextMonth")?.addEventListener("click", () => {
+  const month = monthOffset(state.businessMonth, 1);
+  if (!availableBusinessMonths().has(month)) return showToast("该月份尚未同步");
+  loadBusinessReport(month).catch(error => showToast(error.message));
+});
+
 $("searchInput").addEventListener("input", event => {
   state.search = event.target.value;
   renderTable();
@@ -935,6 +1464,7 @@ document.addEventListener("click", event => {
 
 loadSyncStatus().catch(() => {});
 loadSyncStatus().catch(() => {});
+loadBusinessData().catch(error => showToast(error.message));
 loadDashboard().catch(error => {
   $("syncText").textContent = "WB 加载失败";
   showToast(error.message);

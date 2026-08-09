@@ -269,6 +269,41 @@ async function loadExchangeRates() {
   document.getElementById("withdrawalRateInput").value = (state.withdrawalRate * 100).toFixed(1);
 }
 
+let settingsSaveTimer = null;
+function applyOperationSettings(settings = {}) {
+  if (Number.isFinite(Number(settings.taxRate))) state.taxRate = Number(settings.taxRate);
+  if (Number.isFinite(Number(settings.withdrawalRate))) state.withdrawalRate = Number(settings.withdrawalRate);
+  if (Number.isFinite(Number(settings.logisticsFactorUsdKg))) state.logisticsFactorUsdKg = Number(settings.logisticsFactorUsdKg);
+  document.getElementById("logisticsFactorInput").value = state.logisticsFactorUsdKg;
+  document.getElementById("taxRateInput").value = (state.taxRate * 100).toFixed(1);
+  document.getElementById("withdrawalRateInput").value = (state.withdrawalRate * 100).toFixed(1);
+}
+async function loadOperationSettings() {
+  const response = await fetch("/api/russia/settings", { cache: "no-store" });
+  if (!response.ok) return;
+  const payload = await response.json();
+  if (payload?.ok) applyOperationSettings(payload.data || {});
+}
+function scheduleSettingsSave(patch) {
+  clearTimeout(settingsSaveTimer);
+  settingsSaveTimer = setTimeout(async () => {
+    try {
+      const response = await fetch("/api/russia/settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(patch),
+      });
+      const payload = await response.json();
+      if (!response.ok || !payload.ok) throw new Error(payload.error || "经营参数保存失败");
+      applyOperationSettings(payload.data || {});
+      render();
+      showToast("经营参数已保存");
+    } catch (error) {
+      showToast(error.message);
+    }
+  }, 700);
+}
+
 function updateMonthButtons() {
   const index = state.months.findIndex((item) => item.month === state.currentMonth);
   document.getElementById("prevMonthBtn").disabled = index <= 0;
@@ -320,6 +355,7 @@ async function load() {
     }
   }
   await loadExchangeRates();
+  await loadOperationSettings();
   let manifest;
   try {
     const response = await fetch(`${MONTHS_URL}?v=${Date.now()}`, { cache: "no-store" });
@@ -383,6 +419,7 @@ document.getElementById("taxRateInput").addEventListener("input", (event) => {
   if (Number.isFinite(value) && value >= 0) {
     state.taxRate = value / 100;
     render();
+    scheduleSettingsSave({ taxRate: state.taxRate });
   }
 });
 document.getElementById("withdrawalRateInput").addEventListener("input", (event) => {
@@ -390,6 +427,7 @@ document.getElementById("withdrawalRateInput").addEventListener("input", (event)
   if (Number.isFinite(value) && value >= 0) {
     state.withdrawalRate = value / 100;
     render();
+    scheduleSettingsSave({ withdrawalRate: state.withdrawalRate });
   }
 });
 document.getElementById("rubRateInput").addEventListener("input", (event) => {
@@ -401,6 +439,7 @@ document.getElementById("logisticsFactorInput").addEventListener("input", (event
   if (Number.isFinite(value) && value >= 0) {
     state.logisticsFactorUsdKg = value;
     render();
+    scheduleSettingsSave({ logisticsFactorUsdKg: state.logisticsFactorUsdKg });
   }
 });
 load().catch((error) => {

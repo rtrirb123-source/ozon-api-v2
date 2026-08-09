@@ -53,6 +53,10 @@ ADD COLUMN IF NOT EXISTS fbs_stock NUMERIC;
 ALTER TABLE products
 ADD COLUMN IF NOT EXISTS yesterday_sales NUMERIC;
 
+ALTER TABLE products ADD COLUMN IF NOT EXISTS front_price NUMERIC;
+ALTER TABLE products ADD COLUMN IF NOT EXISTS front_price_source TEXT;
+ALTER TABLE products ADD COLUMN IF NOT EXISTS front_price_updated_at TIMESTAMPTZ;
+
 CREATE INDEX IF NOT EXISTS products_updated_at_idx ON products (updated_at DESC);
 CREATE INDEX IF NOT EXISTS products_product_id_idx ON products (product_id);
 CREATE INDEX IF NOT EXISTS products_ozon_sku_idx ON products (ozon_sku);
@@ -106,6 +110,7 @@ CREATE TABLE IF NOT EXISTS wb_products (
   price NUMERIC,
   purchase_cost NUMERIC,
   ad_ratio NUMERIC,
+  tail_delivery_rate NUMERIC DEFAULT 14,
   competitor_compare TEXT,
   strategy TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -156,6 +161,7 @@ ON product_strategy_history (offer_id, saved_at DESC);
 ALTER TABLE wb_products
 ADD COLUMN IF NOT EXISTS weight NUMERIC,
 ADD COLUMN IF NOT EXISTS freight_rate NUMERIC,
+ADD COLUMN IF NOT EXISTS tail_delivery_rate NUMERIC DEFAULT 14,
 ADD COLUMN IF NOT EXISTS shipping_cost NUMERIC,
 ADD COLUMN IF NOT EXISTS fbs_stock NUMERIC,
 ADD COLUMN IF NOT EXISTS fbw_stock NUMERIC,
@@ -182,7 +188,8 @@ ON wb_product_mappings (updated_at DESC);
 
 
 ALTER TABLE wb_cross_products
-ADD COLUMN IF NOT EXISTS shipping_cost NUMERIC;
+ADD COLUMN IF NOT EXISTS shipping_cost NUMERIC,
+ADD COLUMN IF NOT EXISTS tail_delivery_rate NUMERIC DEFAULT 20;
 
 CREATE TABLE IF NOT EXISTS seerfar_competitors (
   id BIGSERIAL PRIMARY KEY,

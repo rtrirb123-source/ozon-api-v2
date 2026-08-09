@@ -648,8 +648,8 @@ p {
 }
 
 table {
-  width: 100%;
-  min-width: 0;
+  width: max-content;
+  min-width: 2200px;
   border-collapse: collapse;
   table-layout: fixed;
 }

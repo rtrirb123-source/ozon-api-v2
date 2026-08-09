@@ -1,4 +1,5 @@
 const https = require("https");
+const http = require("http");
 const { URL } = require("url");
 const { config } = require("./config");
 const { query } = require("./db");
@@ -63,7 +64,7 @@ function normalizeCompetitor(raw, { platform = "OZON", sku = "" } = {}) {
   };
 }
 
-function requestJson(pathname) {
+function requestJson(pathname, options = {}) {
   if (!config.seerfarCookie && !config.seerfarAuthorization) {
     const error = new Error("SEERFAR_COOKIE or SEERFAR_AUTHORIZATION is required for Seerfar sync");
     error.statusCode = 400;
@@ -80,8 +81,17 @@ function requestJson(pathname) {
   if (config.seerfarCookie) headers.Cookie = config.seerfarCookie;
   if (config.seerfarAuthorization) headers.Authorization = config.seerfarAuthorization;
 
+  const method = String(options.method || "GET").toUpperCase();
+  const payload = options.body === undefined ? "" : JSON.stringify(options.body);
+  if (payload) {
+    headers["Content-Type"] = "application/json";
+    headers["Content-Length"] = Buffer.byteLength(payload);
+  }
+  headers["Client-Language"] = "zh-CN";
+
   return new Promise((resolve, reject) => {
-    const req = https.request(url, { method: "GET", headers, timeout: 60000 }, (res) => {
+    const client = url.protocol === "http:" ? http : https;
+    const req = client.request(url, { method, headers, timeout: 60000 }, (res) => {
       let raw = "";
       res.setEncoding("utf8");
       res.on("data", (chunk) => { raw += chunk; });
@@ -99,8 +109,107 @@ function requestJson(pathname) {
     });
     req.on("timeout", () => req.destroy(new Error("Seerfar API timeout")));
     req.on("error", reject);
+    if (payload) req.write(payload);
     req.end();
   });
+}
+
+function extractTrackedSkus(text = "") {
+  return String(text).split(/[；;\n]+/).map((segment) => segment.match(/\b(\d{8,12})\b/)?.[1]).filter(Boolean);
+}
+
+function buildMonitorRequest({ dateRange = "past_7_days", pageNumber = 1, pageSize = 100 } = {}) {
+  return {
+    dateRange,
+    page: {
+      pageNumber: Math.max(1, Number(pageNumber) || 1),
+      pageSize: Math.min(100, Math.max(1, Number(pageSize) || 100)),
+      orders: [{ field: "addMonitorTime", direction: "DESC" }]
+    }
+  };
+}
+
+async function trackedSkuSet() {
+  const result = await query(`
+    SELECT competitor_compare FROM products
+    WHERE competitor_compare IS NOT NULL AND BTRIM(competitor_compare) <> ''
+  `);
+  return new Set(result.rows.flatMap((row) => extractTrackedSkus(row.competitor_compare)));
+}
+
+async function syncMonitorCompetitors({ platform = "OZON", dateRange = config.seerfarMonitorDateRange, pageSize = 100 } = {}) {
+  await ensureSchema();
+  const wanted = await trackedSkuSet();
+  let pageNumber = 1;
+  let total = 0;
+  let seen = 0;
+  let matched = 0;
+  let ready = 0;
+  const updatedSkus = new Set();
+
+  do {
+    const response = await requestJson(`/product-report/productMonitor/report/search/${encodeURIComponent(platform)}`, {
+      method: "POST",
+      body: buildMonitorRequest({ dateRange, pageNumber, pageSize })
+    });
+    if (Number(response.code) !== 200 || !response.data) {
+      throw new Error(`Seerfar monitor response failed: ${response.msg || response.message || response.code || "unknown"}`);
+    }
+    const records = Array.isArray(response.data.records) ? response.data.records : [];
+    total = Number(response.data.total) || records.length;
+    seen += records.length;
+    for (const raw of records) {
+      const normalized = normalizeCompetitor(raw, { platform });
+      if (!normalized.sku || !wanted.has(normalized.sku)) continue;
+      matched += 1;
+      if (normalized.price !== null || normalized.sales_30d !== null || normalized.revenue_30d !== null) ready += 1;
+      await upsertCompetitor({ platform, sku: normalized.sku, raw, source: "seerfar_monitor" });
+      updatedSkus.add(normalized.sku);
+    }
+    if (!records.length) break;
+    pageNumber += 1;
+  } while (seen < total && pageNumber <= 50);
+
+  return {
+    source: "seerfar_package_monitor",
+    platform,
+    dateRange,
+    monitoredTotal: total,
+    trackedTotal: wanted.size,
+    recordsRead: seen,
+    matched,
+    updated: updatedSkus.size,
+    ready,
+    pending: Math.max(0, updatedSkus.size - ready),
+    pages: pageNumber - 1
+  };
+}
+
+async function monitorStatus() {
+  await ensureSchema();
+  const wanted = await trackedSkuSet();
+  const result = await query(`
+    SELECT sku, price, sales_30d, revenue_30d, stock, rating, review_count, fetched_at
+    FROM seerfar_competitors
+    WHERE platform = 'OZON' AND source = 'seerfar_monitor'
+  `);
+  const rows = result.rows.filter((row) => wanted.has(String(row.sku)));
+  const ready = rows.filter((row) => row.price !== null || row.sales_30d !== null || row.revenue_30d !== null).length;
+  const latest = rows.reduce((value, row) => {
+    const time = row.fetched_at ? new Date(row.fetched_at).getTime() : 0;
+    return time > value ? time : value;
+  }, 0);
+  return {
+    configured: Boolean(config.seerfarCookie || config.seerfarAuthorization),
+    source: "seerfar_package_monitor",
+    trackedTotal: wanted.size,
+    synced: rows.length,
+    ready,
+    pending: Math.max(0, rows.length - ready),
+    coverage: wanted.size ? Number((rows.length / wanted.size * 100).toFixed(1)) : 0,
+    latestFetchedAt: latest ? new Date(latest).toISOString() : null,
+    paidOpenApiUsed: false
+  };
 }
 
 async function ensureSchema() {
@@ -273,4 +382,14 @@ async function getInsights(offerId) {
   return { product, competitors, diagnosis: buildDiagnosis(product, competitors) };
 }
 
-module.exports = { ensureSchema, getInsights, syncCompetitor, upsertCompetitor };
+module.exports = {
+  buildMonitorRequest,
+  ensureSchema,
+  extractTrackedSkus,
+  getInsights,
+  monitorStatus,
+  normalizeCompetitor,
+  syncCompetitor,
+  syncMonitorCompetitors,
+  upsertCompetitor
+};

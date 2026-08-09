@@ -2,13 +2,122 @@ const https = require("https");
 const { config } = require("./config");
 const { query } = require("./db");
 const wbMapping = require("./wb_mapping");
+const { createWbStatsLimiter } = require("./wb_stats_limiter");
 
 const STATS_HOST = "statistics-api.wildberries.ru";
 const CONTENT_HOST = "content-api.wildberries.ru";
 const MARKETPLACE_HOST = "marketplace-api.wildberries.ru";
+const statsLimiter = createWbStatsLimiter();
+const ADVERT_HOST = "advert-api.wildberries.ru";
+const adSummaryCache = new Map();
 
 function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
 function formatDate(date) { return date.toISOString().slice(0, 10); }
+
+function monthBounds(month) {
+  const match = String(month || "").match(/^(\d{4})-(\d{2})$/);
+  if (!match) {
+    const error = new Error("month must use YYYY-MM");
+    error.statusCode = 400;
+    throw error;
+  }
+  const year = Number(match[1]);
+  const monthNumber = Number(match[2]);
+  if (monthNumber < 1 || monthNumber > 12) {
+    const error = new Error("month must use YYYY-MM");
+    error.statusCode = 400;
+    throw error;
+  }
+  const from = `${match[1]}-${match[2]}-01`;
+  const lastDay = new Date(Date.UTC(year, monthNumber, 0)).getUTCDate();
+  const to = `${match[1]}-${match[2]}-${String(lastDay).padStart(2, "0")}`;
+  return { month: `${match[1]}-${match[2]}`, from, to };
+}
+
+function requestAdvert(path) {
+  return new Promise((resolve, reject) => {
+    if (!config.wbApiKey) {
+      const error = new Error("WB_API_KEY is required");
+      error.statusCode = 500;
+      reject(error);
+      return;
+    }
+    const req = https.request({
+      method: "GET",
+      hostname: ADVERT_HOST,
+      path,
+      headers: { Authorization: config.wbApiKey, Accept: "application/json" },
+      timeout: 60000
+    }, res => {
+      let raw = "";
+      res.setEncoding("utf8");
+      res.on("data", chunk => raw += chunk);
+      res.on("end", () => {
+        let parsed;
+        try {
+          parsed = raw ? JSON.parse(raw) : [];
+        } catch (error) {
+          error.statusCode = 502;
+          error.details = raw.slice(0, 500);
+          reject(error);
+          return;
+        }
+        if (res.statusCode < 200 || res.statusCode >= 300) {
+          const error = new Error(`WB advert API HTTP ${res.statusCode}`);
+          error.statusCode = res.statusCode;
+          error.details = parsed;
+          reject(error);
+          return;
+        }
+        resolve(parsed);
+      });
+    });
+    req.on("timeout", () => req.destroy(new Error("WB advert API timeout")));
+    req.on("error", reject);
+    req.end();
+  });
+}
+
+async function adSummary({ month = "" } = {}) {
+  const period = monthBounds(month);
+  const now = Date.now();
+  const cached = adSummaryCache.get(period.month);
+  if (cached && cached.expiresAt > now) return cached.data;
+
+  const path = `/adv/v1/upd?from=${encodeURIComponent(period.from)}&to=${encodeURIComponent(period.to)}`;
+  const response = await requestAdvert(path);
+  const records = Array.isArray(response) ? response : [];
+  const paymentTotals = new Map();
+  const campaigns = new Set();
+  let totalAdSpend = 0;
+  for (const record of records) {
+    const amount = Number(record.updSum || 0);
+    if (Number.isFinite(amount)) totalAdSpend += amount;
+    const paymentType = String(record.paymentType || "未分类");
+    paymentTotals.set(paymentType, Number(paymentTotals.get(paymentType) || 0) + (Number.isFinite(amount) ? amount : 0));
+    if (record.advertId !== null && record.advertId !== undefined) campaigns.add(String(record.advertId));
+  }
+
+  const data = {
+    month: period.month,
+    from: period.from,
+    to: period.to,
+    currency: "RUB",
+    totalAdSpend: Number(totalAdSpend.toFixed(2)),
+    campaignCount: campaigns.size,
+    recordCount: records.length,
+    paymentBreakdown: Array.from(paymentTotals, ([paymentType, amount]) => ({
+      paymentType,
+      amount: Number(amount.toFixed(2))
+    })),
+    source: "WB Promotion API /adv/v1/upd",
+    fetchedAt: new Date().toISOString()
+  };
+  const currentMonth = new Date().toISOString().slice(0, 7);
+  const ttlMs = period.month === currentMonth ? 10 * 60 * 1000 : 24 * 60 * 60 * 1000;
+  adSummaryCache.set(period.month, { data, expiresAt: now + ttlMs });
+  return data;
+}
 
 function moscowDateOffset(daysOffset = 0) {
   const date = new Date(Date.now() + 3 * 60 * 60 * 1000);
@@ -62,20 +171,8 @@ function doRequest(path) {
   });
 }
 
-async function requestStats(path, { attempts = 3 } = {}) {
-  let lastError;
-  for (let attempt = 0; attempt < attempts; attempt += 1) {
-    try {
-      return await doRequest(path);
-    } catch (error) {
-      lastError = error;
-      const isLast = attempt >= attempts - 1;
-      if (error.statusCode !== 429 || error.retryAfterSeconds > 180 || isLast) throw error;
-      const retryAfterMs = error.retryAfterSeconds ? error.retryAfterSeconds * 1000 : 10000 * (attempt + 1);
-      await sleep(Math.min(30000, retryAfterMs));
-    }
-  }
-  throw lastError;
+async function requestStats(path) {
+  return statsLimiter.run(() => doRequest(path));
 }
 
 function requestContent(path, body) {
@@ -351,7 +448,7 @@ async function resolveMetricDate(requestedDate) {
 
 function productSelect() {
   return `id, nm_id, vendor_code, title, brand, subject_name, image_url, stock, fbs_stock, fbw_stock,
-    yesterday_sales, commission_rate, purchase_cost, shipping_cost, weight, freight_rate, return_rate, price, ad_ratio, competitor_compare,
+    yesterday_sales, commission_rate, purchase_cost, shipping_cost, weight, freight_rate, tail_delivery_rate, return_rate, price, ad_ratio, competitor_compare,
     strategy, created_at, updated_at`;
 }
 
@@ -394,7 +491,7 @@ async function dashboard({ date = "" } = {}) {
 }
 
 async function updateProduct(nmId, payload) {
-  const allowed = ["commission_rate", "purchase_cost", "shipping_cost", "weight", "freight_rate", "return_rate", "price", "ad_ratio", "competitor_compare", "strategy", "image_url"];
+  const allowed = ["commission_rate", "purchase_cost", "shipping_cost", "weight", "freight_rate", "tail_delivery_rate", "return_rate", "price", "ad_ratio", "competitor_compare", "strategy", "image_url"];
   const fields = Object.keys(payload || {}).filter(f => allowed.includes(f));
   if (!fields.length) return null;
   const params = fields.map(f => payload[f]);
@@ -462,6 +559,11 @@ async function refreshYesterdaySalesFromMetrics() {
   return Number(result.rows[0]?.total || 0);
 }
 
+async function currentYesterdaySalesTotal() {
+  const result = await query("SELECT COALESCE(SUM(yesterday_sales), 0) AS total FROM wb_products");
+  return Number(result.rows[0]?.total || 0);
+}
+
 function syncErrorInfo(error) {
   return {
     ok: false,
@@ -511,9 +613,10 @@ async function sync({ days = 30, onPhase } = {}) {
   let orders = [];
   let daily = new Map();
   let products = new Map();
+  let salesSucceeded = false;
   try {
     markPhase("sales", { ok: null, running: true, fromDate, startedAt: new Date().toISOString() });
-    orders = await requestStats(`/api/v1/supplier/orders?dateFrom=${fromDate}&flag=0`, { attempts: 2 });
+    orders = await requestStats(`/api/v1/supplier/orders?dateFrom=${fromDate}&flag=0`);
     for (const order of orders) {
       const nmId = String(order.nmId || order.nmID || "");
       const date = String(order.date || order.lastChangeDate || "").slice(0, 10);
@@ -568,6 +671,7 @@ async function sync({ days = 30, onPhase } = {}) {
     result.products = products.size;
     result.salesRows = Array.isArray(orders) ? orders.length : 0;
     result.metricsSaved = daily.size;
+    salesSucceeded = true;
     markPhase("sales", syncOkInfo({ orders: result.salesRows, metricsSaved: result.metricsSaved, fromDate, finishedAt: new Date().toISOString() }));
   } catch (error) {
     result.ok = false;
@@ -575,14 +679,29 @@ async function sync({ days = 30, onPhase } = {}) {
     markPhase("sales", { ...syncErrorInfo(error), fromDate, finishedAt: new Date().toISOString() });
   }
 
-  try {
-    markPhase("yesterday", { ok: null, running: true, startedAt: new Date().toISOString() });
-    result.yesterdayTotal = await refreshYesterdaySalesFromMetrics();
-    markPhase("yesterday", syncOkInfo({ yesterdayTotal: result.yesterdayTotal, finishedAt: new Date().toISOString() }));
-  } catch (error) {
-    result.ok = false;
-    result.partialFailure = true;
-    markPhase("yesterday", { ...syncErrorInfo(error), finishedAt: new Date().toISOString() });
+  if (salesSucceeded) {
+    try {
+      markPhase("yesterday", { ok: null, running: true, startedAt: new Date().toISOString() });
+      result.yesterdayTotal = await refreshYesterdaySalesFromMetrics();
+      markPhase("yesterday", syncOkInfo({ yesterdayTotal: result.yesterdayTotal, finishedAt: new Date().toISOString() }));
+    } catch (error) {
+      result.ok = false;
+      result.partialFailure = true;
+      markPhase("yesterday", { ...syncErrorInfo(error), finishedAt: new Date().toISOString() });
+    }
+  } else {
+    try {
+      result.yesterdayTotal = await currentYesterdaySalesTotal();
+    } catch {
+      result.yesterdayTotal = null;
+    }
+    markPhase("yesterday", {
+      ok: null,
+      skipped: true,
+      reason: "sales_sync_failed_preserved_previous_value",
+      yesterdayTotal: result.yesterdayTotal,
+      finishedAt: new Date().toISOString()
+    });
   }
 
   try {
@@ -678,4 +797,4 @@ async function syncStocks() {
   };
 }
 
-module.exports = { dashboard, storeMetrics, listMetrics, updateProduct, sync, syncStocks, syncCards };
+module.exports = { dashboard, storeMetrics, listMetrics, updateProduct, sync, syncStocks, syncCards, adSummary };

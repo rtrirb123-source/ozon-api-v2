@@ -48,6 +48,7 @@ const editableFields = [
   "tail_delivery_rate",
   "return_rate",
   "price",
+  "front_price",
   "ad_ratio",
   "competitor_compare",
   "strategy",
@@ -73,6 +74,7 @@ const columns = [
   { key: "price", label: "售价", type: "number" },
   { key: "ad_ratio", label: "广告比例", type: "number" },
   { key: "expected_profit", label: "预期利润" },
+  { key: "front_price", label: "前台价格", type: "number" },
   { key: "competitor_compare", label: "竞品对比" },
   { key: "strategy", label: "产品策略" },
   { key: "status", label: "状态" }

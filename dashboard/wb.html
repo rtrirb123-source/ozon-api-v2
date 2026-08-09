@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>WB 本土销量看板</title>
-  <link rel="stylesheet" href="./styles.css?v=20260724-wb-operations-style-3" />
+  <link rel="stylesheet" href="./styles.css?v=20260731-wb-retail-tax-v7" />
   <link rel="stylesheet" href="/auth-shared.css?v=20260724-2">
   <script src="/auth-guard.js?v=20260724-2"></script>
 </head>
@@ -73,7 +73,6 @@
         <label><input type="checkbox" checked disabled> 运费系数</label>
         <label><input type="checkbox" checked disabled> 退货率</label>
         <label><input type="checkbox" checked disabled> 售价</label>
-        <label><input type="checkbox" checked disabled> 广告比例</label>
         <label><input type="checkbox" checked disabled> 预期利润</label>
         <label><input type="checkbox" checked disabled> 竞品对比</label>
         <label><input type="checkbox" checked disabled> 产品策略</label>
@@ -99,13 +98,15 @@
       <div class="wb-operations-hero">
         <div class="wb-period">
           <span class="wb-status-dot"></span>
-          <strong id="wbBusinessPeriod">2026年6月</strong>
+          <button id="wbBusinessPrevMonth" class="wb-month-nav" type="button">‹ 上月</button>
+          <select id="wbBusinessMonthSelect" class="wb-month-select" aria-label="经营月份"></select>
+          <button id="wbBusinessNextMonth" class="wb-month-nav" type="button">下月 ›</button>
           <span>WB 本土 · RUB</span>
         </div>
         <div class="wb-operations-legend" aria-label="图例">
           <span><i class="wb-legend-sales"></i>销售</span>
-          <span><i class="wb-legend-cost"></i>平台及履约费用</span>
-          <span><i class="wb-legend-profit"></i>应付卖家</span>
+          <span><i class="wb-legend-cost"></i>履约及结算费用</span>
+          <span><i class="wb-legend-profit"></i>最终回款</span>
         </div>
       </div>
 
@@ -128,9 +129,9 @@
           <div class="wb-panel-head">
             <div>
               <span class="wb-panel-kicker">TOP PRODUCTS</span>
-              <h3>销售贡献 TOP 8</h3>
+              <h3>利润贡献 TOP 8</h3>
             </div>
-            <span>按销售额</span>
+            <span>按毛利润</span>
           </div>
           <div id="wbBusinessTopProducts" class="wb-insight-content">
             <div class="trend-empty">暂无商品排行数据</div>
@@ -144,7 +145,30 @@
             <span class="wb-panel-kicker">UNIT ECONOMICS</span>
             <h3>商品经营明细</h3>
           </div>
-          <span>按条码 SKU 合并</span>
+          <div class="wb-business-head-summary" aria-label="商品经营明细汇总">
+            <div>
+              <span>WB后台应付总额</span>
+              <strong id="wbBusinessRetailTotal">—</strong>
+            </div>
+            <div>
+              <span>总毛利</span>
+              <strong id="wbBusinessGrossTotal">—</strong>
+            </div>
+          </div>
+          <div class="wb-business-controls" aria-label="到账金额计算参数">
+            <label>税费系数
+              <span><input id="wbTaxRateInput" type="number" min="0" max="100" step="0.1" value="12">%</span>
+              <small aria-hidden="true">&nbsp;</small>
+            </label>
+            <label>回款系数
+              <span><input id="wbCollectionRateInput" type="number" min="0" max="100" step="0.1" value="3">%</span>
+              <small aria-hidden="true">&nbsp;</small>
+            </label>
+            <label>卢布兑人民币汇率
+              <span><input id="wbRubToCnyInput" type="number" readonly aria-readonly="true"></span>
+              <small>中国银行</small>
+            </label>
+          </div>
         </div>
         <div id="wbBusinessTable" class="business-table-wrap"></div>
       </article>
@@ -185,6 +209,6 @@
     </form>
   </dialog>
 
-  <script src="./wb.js?v=20260724-wb-operations-style-3"></script>
+  <script src="./wb.js?v=20260802-unified-business-profit"></script>
 </body>
 </html>

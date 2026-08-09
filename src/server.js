@@ -18,6 +18,19 @@ const seerfar = require("./seerfar");
 const inventory = require("./inventory");
 const inventoryOrderSync = require("./inventory_order_sync");
 const inventoryHistory = require("./inventory_history");
+const automation = require("./automation");
+const ozonSyncLock = require("./ozon_sync_lock");
+const dailyProfit = require("./daily_profit");
+const pricingStrategy = require("./pricing_strategy");
+const actualCosts = require("./actual_costs");
+const competitorStrategy = require("./competitor_strategy");
+const advertisingStrategy = require("./advertising_strategy");
+const promotionStrategy = require("./promotion_strategy");
+const ozonPromotionSync = require("./ozon_promotion_sync");
+const contentStrategy = require("./content_strategy");
+const operationQueue = require("./operation_queue");
+const executionGuard = require("./execution_guard");
+const ozonBackendArchitecture = require("./ozon_backend_architecture");
 
 const startedAt = new Date().toISOString();
 
@@ -46,6 +59,126 @@ async function readJson(req) {
   let body = "";
   for await (const chunk of req) body += chunk;
   return body ? JSON.parse(body) : {};
+}
+
+
+const RUSSIA_OPERATIONS_SETTINGS_PATH = "/var/www/ozon-dashboard/russia-operations-settings.json";
+const WB_BUSINESS_SETTINGS_PATH = "/var/www/ozon-dashboard/wb-business-settings.json";
+const DEFAULT_WB_BUSINESS_SETTINGS = {
+  taxRate: 0.12,
+  collectionRate: 0.03,
+  logisticsFactorUsdKg: 3,
+};
+const DEFAULT_RUSSIA_OPERATIONS_SETTINGS = {
+  taxRate: 0.12,
+  withdrawalRate: 0.03,
+  logisticsFactorUsdKg: 3,
+  bonusCoefficients: {},
+};
+
+function numberSetting(value, fallback, { min = 0, max = 100 } = {}) {
+  const number = Number(value);
+  return Number.isFinite(number) && number >= min && number <= max ? number : fallback;
+}
+
+function normalizeBonusCoefficients(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return Object.fromEntries(
+    Object.entries(value)
+      .map(([sku, coefficient]) => [String(sku).trim(), Number(coefficient)])
+      .filter(([sku, coefficient]) => sku && Number.isFinite(coefficient) && coefficient >= 0 && coefficient <= 1)
+  );
+}
+
+function readRussiaOperationsSettings() {
+  try {
+    if (!fs.existsSync(RUSSIA_OPERATIONS_SETTINGS_PATH)) return { ...DEFAULT_RUSSIA_OPERATIONS_SETTINGS };
+    const parsed = JSON.parse(fs.readFileSync(RUSSIA_OPERATIONS_SETTINGS_PATH, "utf8"));
+    return {
+      taxRate: numberSetting(parsed.taxRate, DEFAULT_RUSSIA_OPERATIONS_SETTINGS.taxRate, { min: 0, max: 1 }),
+      withdrawalRate: numberSetting(parsed.withdrawalRate, DEFAULT_RUSSIA_OPERATIONS_SETTINGS.withdrawalRate, { min: 0, max: 1 }),
+      logisticsFactorUsdKg: numberSetting(parsed.logisticsFactorUsdKg, DEFAULT_RUSSIA_OPERATIONS_SETTINGS.logisticsFactorUsdKg, { min: 0, max: 100 }),
+      bonusCoefficients: normalizeBonusCoefficients(parsed.bonusCoefficients),
+      updatedAt: parsed.updatedAt || "",
+      updatedBy: parsed.updatedBy || "",
+    };
+  } catch {
+    return { ...DEFAULT_RUSSIA_OPERATIONS_SETTINGS };
+  }
+}
+
+function publicRussiaOperationsSettings() {
+  const { bonusCoefficients, ...settings } = readRussiaOperationsSettings();
+  return settings;
+}
+
+function saveRussiaBonusCoefficient(sku, value, user) {
+  const cleanSku = String(sku || "").trim();
+  const coefficient = Number(value);
+  if (!cleanSku) throw new Error("SKU不能为空");
+  if (!Number.isFinite(coefficient) || coefficient < 0 || coefficient > 1) {
+    throw new Error("提奖系数必须在0%到100%之间");
+  }
+  const settings = readRussiaOperationsSettings();
+  settings.bonusCoefficients = normalizeBonusCoefficients(settings.bonusCoefficients);
+  if (coefficient === 0) delete settings.bonusCoefficients[cleanSku];
+  else settings.bonusCoefficients[cleanSku] = coefficient;
+  settings.updatedAt = new Date().toISOString();
+  settings.updatedBy = user?.username || "admin";
+  fs.writeFileSync(RUSSIA_OPERATIONS_SETTINGS_PATH, JSON.stringify(settings, null, 2));
+  return { sku: cleanSku, coefficient };
+}
+
+function saveRussiaOperationsSettings(patch, user) {
+  const current = readRussiaOperationsSettings();
+  const next = { ...current };
+  if (Object.prototype.hasOwnProperty.call(patch, "taxRate")) {
+    next.taxRate = numberSetting(patch.taxRate, current.taxRate, { min: 0, max: 1 });
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, "withdrawalRate")) {
+    next.withdrawalRate = numberSetting(patch.withdrawalRate, current.withdrawalRate, { min: 0, max: 1 });
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, "logisticsFactorUsdKg")) {
+    next.logisticsFactorUsdKg = numberSetting(patch.logisticsFactorUsdKg, current.logisticsFactorUsdKg, { min: 0, max: 100 });
+  }
+  next.updatedAt = new Date().toISOString();
+  next.updatedBy = user?.username || user?.operator || "unknown";
+  fs.writeFileSync(RUSSIA_OPERATIONS_SETTINGS_PATH, JSON.stringify(next, null, 2));
+  return next;
+}
+
+function readWbBusinessSettings() {
+  try {
+    if (!fs.existsSync(WB_BUSINESS_SETTINGS_PATH)) return { ...DEFAULT_WB_BUSINESS_SETTINGS };
+    const parsed = JSON.parse(fs.readFileSync(WB_BUSINESS_SETTINGS_PATH, "utf8"));
+    return {
+      taxRate: numberSetting(parsed.taxRate, DEFAULT_WB_BUSINESS_SETTINGS.taxRate, { min: 0, max: 1 }),
+      collectionRate: numberSetting(parsed.collectionRate, DEFAULT_WB_BUSINESS_SETTINGS.collectionRate, { min: 0, max: 1 }),
+      logisticsFactorUsdKg: numberSetting(parsed.logisticsFactorUsdKg, DEFAULT_WB_BUSINESS_SETTINGS.logisticsFactorUsdKg, { min: 0, max: 100 }),
+      updatedAt: parsed.updatedAt || "",
+      updatedBy: parsed.updatedBy || "",
+    };
+  } catch {
+    return { ...DEFAULT_WB_BUSINESS_SETTINGS };
+  }
+}
+
+function saveWbBusinessSettings(patch, user) {
+  const current = readWbBusinessSettings();
+  const next = { ...current };
+  if (Object.prototype.hasOwnProperty.call(patch, "taxRate")) {
+    next.taxRate = numberSetting(patch.taxRate, current.taxRate, { min: 0, max: 1 });
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, "collectionRate")) {
+    next.collectionRate = numberSetting(patch.collectionRate, current.collectionRate, { min: 0, max: 1 });
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, "logisticsFactorUsdKg")) {
+    next.logisticsFactorUsdKg = numberSetting(patch.logisticsFactorUsdKg, current.logisticsFactorUsdKg, { min: 0, max: 100 });
+  }
+  next.updatedAt = new Date().toISOString();
+  next.updatedBy = user?.username || "admin";
+  fs.writeFileSync(WB_BUSINESS_SETTINGS_PATH, JSON.stringify(next, null, 2));
+  return next;
 }
 
 
@@ -208,9 +341,143 @@ async function route(req, res) {
     }
   }
 
+  if (url.pathname.startsWith("/api/automation/")) {
+    const user = dashboardAuth.currentUser(req);
+    if (!user) return sendJson(req, res, 401, { ok: false, error: "Authentication required" });
+
+    if (url.pathname === "/api/automation/overview" && req.method === "GET") {
+      return sendJson(req, res, 200, { ok: true, data: await automation.overview() });
+    }
+    if (url.pathname === "/api/automation/backend-architecture" && req.method === "GET") {
+      return sendJson(req, res, 200, { ok: true, data: ozonBackendArchitecture.overview() });
+    }
+    if (url.pathname === "/api/automation/daily-profit" && req.method === "GET") {
+      return sendJson(req, res, 200, {
+        ok: true,
+        data: await dailyProfit.report({ days: url.searchParams.get("days") || 7 }),
+      });
+    }
+    if (url.pathname === "/api/automation/pricing-recommendations" && req.method === "GET") {
+      return sendJson(req, res, 200, {
+        ok: true,
+        data: await pricingStrategy.recommendations({
+          targetMargin: url.searchParams.has("target_margin") ? Number(url.searchParams.get("target_margin")) / 100 : undefined,
+          minimumMargin: url.searchParams.has("minimum_margin") ? Number(url.searchParams.get("minimum_margin")) / 100 : undefined,
+          minimumProfitCny: url.searchParams.has("minimum_profit") ? url.searchParams.get("minimum_profit") : undefined,
+          maxChangeRate: url.searchParams.has("max_change") ? Number(url.searchParams.get("max_change")) / 100 : undefined,
+        }),
+      });
+    }
+    if (url.pathname === "/api/automation/actual-costs" && req.method === "GET") {
+      return sendJson(req, res, 200, { ok: true, data: await actualCosts.snapshot() });
+    }
+    if (url.pathname === "/api/automation/competitor-strategies" && req.method === "GET") {
+      return sendJson(req, res, 200, { ok: true, data: await competitorStrategy.strategies() });
+    }
+    if (url.pathname === "/api/automation/seerfar-monitor" && req.method === "GET") {
+      return sendJson(req, res, 200, { ok: true, data: await seerfar.monitorStatus() });
+    }
+    if (url.pathname === "/api/automation/advertising-recommendations" && req.method === "GET") {
+      return sendJson(req, res, 200, { ok: true, data: await advertisingStrategy.recommendations() });
+    }
+    if (url.pathname === "/api/automation/promotion-recommendations" && req.method === "GET") {
+      return sendJson(req, res, 200, { ok: true, data: await promotionStrategy.recommendations() });
+    }
+    if (url.pathname === "/api/automation/content-recommendations" && req.method === "GET") {
+      return sendJson(req, res, 200, { ok: true, data: await contentStrategy.recommendations() });
+    }
+    if (url.pathname === "/api/automation/action-queue" && req.method === "GET") {
+      return sendJson(req, res, 200, { ok: true, data: {
+        summary: await operationQueue.summary(),
+        rows: await operationQueue.list({ status: url.searchParams.get("status") ?? "", limit: url.searchParams.get("limit") || 200 })
+      } });
+    }
+    const actionReviewMatch = url.pathname.match(/^\/api\/automation\/action-queue\/(\d+)$/);
+    if (actionReviewMatch && req.method === "PATCH") {
+      if (user.role !== "admin") {
+        return sendJson(req, res, 403, { ok: false, error: "Administrator access required" });
+      }
+      const body = await readJson(req);
+      return sendJson(req, res, 200, {
+        ok: true,
+        data: await operationQueue.review(actionReviewMatch[1], body.decision, user)
+      });
+    }
+    if (url.pathname === "/api/automation/executions" && req.method === "GET") {
+      return sendJson(req, res, 200, { ok: true, data: await executionGuard.list({ limit: url.searchParams.get("limit") || 100 }) });
+    }
+    const actionSimulateMatch = url.pathname.match(/^\/api\/automation\/action-queue\/(\d+)\/simulate$/);
+    if (actionSimulateMatch && req.method === "POST") {
+      if (user.role !== "admin") {
+        return sendJson(req, res, 403, { ok: false, error: "Administrator access required" });
+      }
+      return sendJson(req, res, 200, {
+        ok: true,
+        data: await executionGuard.simulate(actionSimulateMatch[1], user)
+      });
+    }
+    if (url.pathname === "/api/automation/jobs" && req.method === "GET") {
+      return sendJson(req, res, 200, { ok: true, data: await automation.listJobs() });
+    }
+    if (url.pathname === "/api/automation/runs" && req.method === "GET") {
+      return sendJson(req, res, 200, {
+        ok: true,
+        data: await automation.listRuns(url.searchParams.get("limit") || 50)
+      });
+    }
+    const runMatch = url.pathname.match(/^\/api\/automation\/jobs\/([^/]+)\/run$/);
+    if (runMatch && req.method === "POST") {
+      if (user.role !== "admin") {
+        return sendJson(req, res, 403, { ok: false, error: "Administrator access required" });
+      }
+      return sendJson(req, res, 200, {
+        ok: true,
+        data: await automation.runJob(runMatch[1], "manual")
+      });
+    }
+    const jobMatch = url.pathname.match(/^\/api\/automation\/jobs\/([^/]+)$/);
+    if (jobMatch && req.method === "PATCH") {
+      if (user.role !== "admin") {
+        return sendJson(req, res, 403, { ok: false, error: "Administrator access required" });
+      }
+      return sendJson(req, res, 200, {
+        ok: true,
+        data: await automation.updateJob(jobMatch[1], await readJson(req))
+      });
+    }
+    return sendJson(req, res, 404, { ok: false, error: "Automation route not found" });
+  }
+
   if (url.pathname.startsWith("/api/russia/")) {
     const user = dashboardAuth.currentUser(req);
     if (!user) return sendJson(req, res, 401, { error: "???" });
+    if (url.pathname === "/api/russia/settings" && req.method === "GET") {
+      return sendJson(req, res, 200, { ok: true, data: publicRussiaOperationsSettings() });
+    }
+    if (url.pathname === "/api/russia/bonus-coefficients" && req.method === "GET") {
+      if (user.role !== "admin") return sendJson(req, res, 403, { ok: false, error: "仅管理员可查看提奖系数" });
+      return sendJson(req, res, 200, {
+        ok: true,
+        data: readRussiaOperationsSettings().bonusCoefficients || {},
+      });
+    }
+    const bonusCoefficientMatch = url.pathname.match(/^\/api\/russia\/bonus-coefficients\/([^/]+)$/);
+    if (bonusCoefficientMatch && req.method === "PUT") {
+      if (user.role !== "admin") return sendJson(req, res, 403, { ok: false, error: "仅管理员可修改提奖系数" });
+      try {
+        const body = await readJson(req);
+        return sendJson(req, res, 200, {
+          ok: true,
+          data: saveRussiaBonusCoefficient(bonusCoefficientMatch[1], body.coefficient, user),
+        });
+      } catch (error) {
+        return sendJson(req, res, 400, { ok: false, error: error.message });
+      }
+    }
+    if (url.pathname === "/api/russia/settings" && req.method === "PATCH") {
+      if (user.role !== "admin") return sendJson(req, res, 403, { ok: false, error: "仅管理员可修改经营参数" });
+      return sendJson(req, res, 200, { ok: true, data: saveRussiaOperationsSettings(await readJson(req), user) });
+    }
     if (url.pathname === "/api/russia/months" && req.method === "GET") {
       const manifest = JSON.parse(
         fs.readFileSync("/var/www/ozon-dashboard/russia-unit-economics-months.json", "utf8"),
@@ -243,6 +510,33 @@ async function route(req, res) {
       } catch (error) {
         return sendJson(req, res, 400, { error: error.message });
       }
+    }
+  }
+
+  if (url.pathname.startsWith("/api/wb/business")) {
+    const user = dashboardAuth.currentUser(req);
+    if (!user) return sendJson(req, res, 401, { ok: false, error: "Authentication required" });
+
+    if (url.pathname === "/api/wb/business/settings" && req.method === "GET") {
+      return sendJson(req, res, 200, { ok: true, data: readWbBusinessSettings() });
+    }
+    if (url.pathname === "/api/wb/business/settings" && req.method === "PATCH") {
+      if (user.role !== "admin") {
+        return sendJson(req, res, 403, { ok: false, error: "仅管理员可修改WB经营参数" });
+      }
+      return sendJson(req, res, 200, {
+        ok: true,
+        data: saveWbBusinessSettings(await readJson(req), user),
+      });
+    }
+    const costMatch = url.pathname.match(/^\/api\/wb\/business-costs\/(\d{4}-\d{2})$/);
+    if (costMatch && req.method === "GET") {
+      const filename = `/var/www/ozon-dashboard/russia-unit-economics-${costMatch[1]}.json`;
+      if (!fs.existsSync(filename)) {
+        return sendJson(req, res, 404, { ok: false, error: "该月份成本数据尚未同步" });
+      }
+      const payload = JSON.parse(fs.readFileSync(filename, "utf8"));
+      return sendJson(req, res, 200, payload);
     }
   }
 
@@ -538,18 +832,6 @@ async function route(req, res) {
     return;
   }
 
-  if (req.method === "GET" && path === "/api/ozon/replenishment/fbo-clusters/status") {
-    sendJson(req, res, 200, {
-      ok: true,
-      data: ozon.getFboReplenishmentRefreshStatus({
-        days: url.searchParams.get("days") || 30,
-        targetDays: url.searchParams.get("target_days") || 30,
-        offers: url.searchParams.get("offers") || ""
-      })
-    });
-    return;
-  }
-
   if (req.method === "GET" && path === "/api/ozon/replenishment/fbo-clusters") {
     sendJson(req, res, 200, {
       ok: true,
@@ -558,8 +840,7 @@ async function route(req, res) {
         targetDays: url.searchParams.get("target_days") || 30,
         offers: url.searchParams.get("offers") || "",
         refresh: url.searchParams.get("refresh") === "1",
-        compact: url.searchParams.get("compact") === "1",
-        force: url.searchParams.get("force") === "1"
+        compact: url.searchParams.get("compact") === "1"
       })
     });
     return;
@@ -760,9 +1041,9 @@ async function route(req, res) {
   if (req.method === "POST" && path === "/api/sync/ozon") {
     sendJson(req, res, 200, {
       ok: true,
-      data: await ozon.syncOzonMetrics({
-        days: url.searchParams.get("days") || 30
-      })
+      data: await ozonSyncLock.withLock("legacy-ozon-metrics", () =>
+        ozon.syncOzonMetrics({ days: url.searchParams.get("days") || 30 })
+      )
     });
     return;
   }
@@ -770,7 +1051,7 @@ async function route(req, res) {
   if (req.method === "POST" && path === "/api/sync/ozon/products") {
     sendJson(req, res, 200, {
       ok: true,
-      data: await ozon.syncOzonProducts()
+      data: await ozonSyncLock.withLock("legacy-ozon-products", () => ozon.syncOzonProducts())
     });
     return;
   }
@@ -778,7 +1059,7 @@ async function route(req, res) {
   if (req.method === "POST" && path === "/api/sync/ozon/inventory-stocks") {
     sendJson(req, res, 200, {
       ok: true,
-      data: await inventory.refreshOzonStockSnapshot()
+      data: await ozonSyncLock.withLock("legacy-ozon-inventory", () => inventory.refreshOzonStockSnapshot())
     });
     return;
   }
@@ -929,6 +1210,41 @@ async function route(req, res) {
     }
   }
 
+
+    const wbCrossBusinessCostsMatch = path.match(/^\/api\/wb-cross\/business-costs\/(\d{4}-\d{2})$/);
+    if (wbCrossBusinessCostsMatch && req.method === "GET") {
+      const user = dashboardAuth.currentUser(req);
+      if (!user) return sendJson(req, res, 401, { error: "Authentication required" });
+      const filename = `/var/www/ozon-dashboard/russia-unit-economics-${wbCrossBusinessCostsMatch[1]}.json`;
+      if (!fs.existsSync(filename)) return sendJson(req, res, 404, { error: "Monthly data not found" });
+      return sendJson(req, res, 200, JSON.parse(fs.readFileSync(filename, "utf8")));
+    }
+
+    if (req.method === "GET" && path === "/api/wb/ads/summary") {
+      sendJson(req, res, 200, {
+        ok: true,
+        data: await wb.adSummary({ month: url.searchParams.get("month") || "" })
+      });
+      return;
+    }
+
+    if (req.method === "GET" && path === "/api/wb-cross/ads/summary") {
+      sendJson(req, res, 200, {
+        ok: true,
+        data: await wbCross.adSummary({
+          month: url.searchParams.get("month") || "",
+          date: url.searchParams.get("date") || ""
+        })
+      });
+      return;
+    }
+
+    if (req.method === "POST" && path === "/api/sync/wb-cross/ads") {
+      const from = url.searchParams.get("from") || "";
+      const to = url.searchParams.get("to") || "";
+      sendJson(req, res, 200, { ok: true, data: await wbCross.syncAds({ from, to }) });
+      return;
+    }
 
     if (req.method === "GET" && path === "/api/wb-cross/dashboard") {
       sendJson(req, res, 200, { ok: true, data: await wbCross.dashboard({ date: url.searchParams.get("date") || "" }) });
@@ -1126,6 +1442,16 @@ async function start() {
   server.listen(config.port, "0.0.0.0", () => {
     console.log(`[ozon-api-v2] listening on 0.0.0.0:${config.port}`);
     inventoryOrderSync.start();
+    automation.start({
+      ozon_products_read_sync: () => ozonSyncLock.withLock("automation-ozon-products", () => ozon.syncOzonProducts()),
+      ozon_metrics_read_sync: () => ozonSyncLock.withLock("automation-ozon-metrics", () => ozon.syncOzonMetrics({ days: 7 })),
+      seerfar_monitor_read_sync: () => ozonSyncLock.withLock("automation-seerfar-monitor", () => seerfar.syncMonitorCompetitors()),
+      ozon_ad_campaign_read_sync: () => ozonSyncLock.withLock("automation-ad-campaigns", () => ozon.syncPerformanceCampaignSnapshot()),
+      ozon_advertising_strategy_refresh: () => advertisingStrategy.refreshQueue(),
+      ozon_promotion_read_sync: () => ozonSyncLock.withLock("automation-ozon-promotions", () => ozonPromotionSync.sync()),
+      ozon_promotion_strategy_refresh: () => promotionStrategy.refreshQueue(),
+      ozon_content_strategy_refresh: () => contentStrategy.refreshQueue()
+    });
     inventoryHistory.ensureSchema().catch((error) => console.error("[inventory-history]", error.message));
     console.log("[inventory-order-sync] scheduled");
   });

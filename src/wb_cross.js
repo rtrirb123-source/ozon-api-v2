@@ -6,6 +6,7 @@ const wbMapping = require("./wb_mapping");
 
 const API_HOST = "statistics-api.wildberries.ru";
 const MARKETPLACE_HOST = "marketplace-api.wildberries.ru";
+const ADVERT_HOST = "advert-api.wildberries.ru";
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -31,6 +32,45 @@ function moscowDateOffset(daysOffset) {
   const now = new Date();
   now.setUTCDate(now.getUTCDate() + daysOffset);
   return formatMoscowDate(now);
+}
+
+function requestAdvert(pathname) {
+  const key = process.env.WB_CROSS_API_KEY;
+  if (!key) throw new Error("WB_CROSS_API_KEY is required");
+
+  return new Promise((resolve, reject) => {
+    const req = https.request(
+      {
+        hostname: ADVERT_HOST,
+        path: pathname,
+        method: "GET",
+        headers: { Authorization: key },
+        timeout: 180000
+      },
+      res => {
+        let raw = "";
+        res.setEncoding("utf8");
+        res.on("data", chunk => { raw += chunk; });
+        res.on("end", () => {
+          if (res.statusCode < 200 || res.statusCode >= 300) {
+            const error = new Error(`WB advert API HTTP ${res.statusCode}: ${raw.slice(0, 300)}`);
+            error.statusCode = res.statusCode;
+            reject(error);
+            return;
+          }
+          try {
+            resolve(JSON.parse(raw || "[]"));
+          } catch (error) {
+            reject(new Error(`WB advert API JSON parse failed: ${error.message}`));
+          }
+        });
+      }
+    );
+
+    req.on("timeout", () => req.destroy(new Error("WB advert API timeout after 180s")));
+    req.on("error", reject);
+    req.end();
+  });
 }
 
 function requestStats(pathname) {
@@ -89,6 +129,7 @@ async function ensureSchema() {
       shipping_cost NUMERIC,
       weight NUMERIC,
       freight_rate NUMERIC,
+      tail_delivery_rate NUMERIC DEFAULT 20,
       return_rate NUMERIC,
       price NUMERIC,
       ad_ratio NUMERIC,
@@ -106,6 +147,21 @@ async function ensureSchema() {
       metric_date DATE NOT NULL,
       sales_units NUMERIC DEFAULT 0,
       revenue NUMERIC DEFAULT 0,
+      updated_at TIMESTAMPTZ DEFAULT now(),
+      UNIQUE (nm_id, metric_date)
+    )
+  `);
+  await query(`
+    CREATE TABLE IF NOT EXISTS wb_cross_ad_metrics (
+      id BIGSERIAL PRIMARY KEY,
+      nm_id TEXT NOT NULL,
+      metric_date DATE NOT NULL,
+      ad_spend NUMERIC DEFAULT 0,
+      views NUMERIC DEFAULT 0,
+      clicks NUMERIC DEFAULT 0,
+      orders NUMERIC DEFAULT 0,
+      ad_revenue NUMERIC DEFAULT 0,
+      currency TEXT DEFAULT 'CNY',
       updated_at TIMESTAMPTZ DEFAULT now(),
       UNIQUE (nm_id, metric_date)
     )
@@ -149,9 +205,30 @@ async function dashboard({ date = "" } = {}) {
   const products = productsResult.rows;
 
   const metrics = await query(
-    `SELECT nm_id, COALESCE(sales_units, 0) AS sales_units, COALESCE(revenue, 0) AS revenue
-     FROM wb_cross_daily_metrics
-     WHERE metric_date = $1::date`,
+    `WITH metric_products AS (
+       SELECT nm_id
+       FROM wb_cross_daily_metrics
+       WHERE metric_date = $1::date
+       UNION
+       SELECT nm_id
+       FROM wb_cross_ad_metrics
+       WHERE metric_date = $1::date
+     )
+     SELECT
+       x.nm_id,
+       COALESCE(m.sales_units, 0) AS sales_units,
+       COALESCE(m.revenue, 0) AS revenue,
+       COALESCE(a.ad_spend, 0) AS ad_spend,
+       COALESCE(a.views, 0) AS ad_views,
+       COALESCE(a.clicks, 0) AS ad_clicks,
+       COALESCE(a.orders, 0) AS ad_orders,
+       COALESCE(a.ad_revenue, 0) AS ad_revenue,
+       COALESCE(a.currency, 'CNY') AS ad_currency
+     FROM metric_products x
+     LEFT JOIN wb_cross_daily_metrics m
+       ON m.nm_id = x.nm_id AND m.metric_date = $1::date
+     LEFT JOIN wb_cross_ad_metrics a
+       ON a.nm_id = x.nm_id AND a.metric_date = $1::date`,
     [selectedDate]
   );
   const byNm = new Map(metrics.rows.map(row => [String(row.nm_id), row]));
@@ -159,6 +236,12 @@ async function dashboard({ date = "" } = {}) {
     const metric = byNm.get(String(product.nm_id));
     product.selected_sales = Number(metric?.sales_units || 0);
     product.selected_revenue = Number(metric?.revenue || 0);
+    product.selected_ad_spend = Number(metric?.ad_spend || 0);
+    product.selected_ad_views = Number(metric?.ad_views || 0);
+    product.selected_ad_clicks = Number(metric?.ad_clicks || 0);
+    product.selected_ad_orders = Number(metric?.ad_orders || 0);
+    product.selected_ad_revenue = Number(metric?.ad_revenue || 0);
+    product.selected_ad_currency = metric?.ad_currency || "CNY";
     product.metric_date = selectedDate;
     product.yesterday_sales = product.selected_sales;
   }
@@ -170,6 +253,8 @@ async function dashboard({ date = "" } = {}) {
       totalYesterdaySales: products.reduce((s, x) => s + Number(x.yesterday_sales || 0), 0),
       totalSales: products.reduce((s, x) => s + Number(x.selected_sales || 0), 0),
       totalRevenue: products.reduce((s, x) => s + Number(x.selected_revenue || 0), 0),
+      totalAdSpend: products.reduce((s, x) => s + Number(x.selected_ad_spend || 0), 0),
+      totalAdOrders: products.reduce((s, x) => s + Number(x.selected_ad_orders || 0), 0),
       selectedDate
     },
     products,
@@ -194,7 +279,172 @@ async function storeMetrics({ days = 30 } = {}) {
     [safeDays]
   );
   return result.rows;
-}async function listMetrics(nmId, options = {}) {
+}
+function normalizeMonthInput(value) {
+  const month = String(value || "").trim();
+  return /^\d{4}-\d{2}$/.test(month) ? month : "";
+}
+
+function normalizeAdvertDate(value) {
+  return String(value || "").slice(0, 10);
+}
+
+function advertItemRows(day) {
+  const rows = [];
+  for (const app of Array.isArray(day?.apps) ? day.apps : []) {
+    const items = Array.isArray(app?.nms) ? app.nms : (Array.isArray(app?.nm) ? app.nm : []);
+    for (const item of items) rows.push(item);
+  }
+  return rows;
+}
+
+function addAdvertMetric(target, key, row, currency) {
+  const current = target.get(key) || {
+    nm_id: String(row.nmId || row.nm || "__unattributed__"),
+    metric_date: normalizeAdvertDate(row.date),
+    ad_spend: 0,
+    views: 0,
+    clicks: 0,
+    orders: 0,
+    ad_revenue: 0,
+    currency: currency || "CNY"
+  };
+  current.ad_spend += Number(row.sum || 0);
+  current.views += Number(row.views || 0);
+  current.clicks += Number(row.clicks || 0);
+  current.orders += Number(row.orders || 0);
+  current.ad_revenue += Number(row.sum_price || 0);
+  target.set(key, current);
+}
+
+async function adSummary({ month = "", date = "" } = {}) {
+  await ensureSchema();
+  const safeDate = normalizeMetricDateInput(date);
+  const safeMonth = normalizeMonthInput(month);
+  if (!safeDate && !safeMonth) throw new Error("month or date is required");
+  const condition = safeDate ? "metric_date = $1::date" : "to_char(metric_date, 'YYYY-MM') = $1";
+  const value = safeDate || safeMonth;
+  const rowsResult = await query(
+    `SELECT
+       nm_id,
+       COALESCE(SUM(ad_spend), 0) AS ad_spend,
+       COALESCE(SUM(views), 0) AS views,
+       COALESCE(SUM(clicks), 0) AS clicks,
+       COALESCE(SUM(orders), 0) AS orders,
+       COALESCE(SUM(ad_revenue), 0) AS ad_revenue,
+       COALESCE(MAX(currency), 'CNY') AS currency
+     FROM wb_cross_ad_metrics
+     WHERE ${condition}
+     GROUP BY nm_id, currency
+     ORDER BY COALESCE(SUM(ad_spend), 0) DESC`,
+    [value]
+  );
+  const totalResult = await query(
+    `SELECT
+       COALESCE(SUM(ad_spend), 0) AS ad_spend,
+       COALESCE(SUM(views), 0) AS views,
+       COALESCE(SUM(clicks), 0) AS clicks,
+       COALESCE(SUM(orders), 0) AS orders,
+       COALESCE(SUM(ad_revenue), 0) AS ad_revenue,
+       COALESCE(MAX(currency), 'CNY') AS currency,
+       MAX(updated_at) AS updated_at
+     FROM wb_cross_ad_metrics
+     WHERE ${condition}`,
+    [value]
+  );
+  return {
+    period: safeDate ? { date: safeDate } : { month: safeMonth },
+    total: totalResult.rows[0] || {},
+    rows: rowsResult.rows
+  };
+}
+
+async function syncAds({ from = "", to = "" } = {}) {
+  await ensureSchema();
+  const fallbackDate = moscowDateOffset(-1);
+  const safeFrom = normalizeMetricDateInput(from) || fallbackDate;
+  const safeTo = normalizeMetricDateInput(to) || safeFrom;
+  if (safeFrom > safeTo) throw new Error("valid from/to dates are required");
+  const days = Math.floor((Date.parse(`${safeTo}T00:00:00Z`) - Date.parse(`${safeFrom}T00:00:00Z`)) / 86400000) + 1;
+  if (days < 1 || days > 31) throw new Error("WB advert period must be between 1 and 31 days");
+
+  const campaignPayload = await requestAdvert("/adv/v1/promotion/count");
+  const groups = Array.isArray(campaignPayload?.adverts) ? campaignPayload.adverts : [];
+  const ids = groups
+    .filter(group => [7, 9, 11].includes(Number(group.status)))
+    .flatMap(group => Array.isArray(group.advert_list) ? group.advert_list : [])
+    .map(item => Number(item.advertId))
+    .filter(Number.isFinite);
+  const uniqueIds = Array.from(new Set(ids));
+  const batches = [];
+  for (let index = 0; index < uniqueIds.length; index += 50) {
+    batches.push(uniqueIds.slice(index, index + 50));
+  }
+
+  const aggregate = new Map();
+  for (let index = 0; index < batches.length; index++) {
+    if (index > 0) await sleep(21000);
+    const path = `/adv/v3/fullstats?ids=${encodeURIComponent(batches[index].join(","))}&beginDate=${safeFrom}&endDate=${safeTo}`;
+    const campaigns = await requestAdvert(path);
+    for (const campaign of Array.isArray(campaigns) ? campaigns : []) {
+      const currency = campaign.currency || "CNY";
+      for (const day of Array.isArray(campaign.days) ? campaign.days : []) {
+        const metricDate = normalizeAdvertDate(day.date);
+        if (!metricDate) continue;
+        const itemRows = advertItemRows(day);
+        let detailedSpend = 0;
+        for (const item of itemRows) {
+          const nmId = String(item.nmId || item.nm || "").trim();
+          if (!nmId) continue;
+          detailedSpend += Number(item.sum || 0);
+          addAdvertMetric(aggregate, `${nmId}:${metricDate}`, { ...item, nmId, date: metricDate }, currency);
+        }
+        const remainder = Math.max(0, Number(day.sum || 0) - detailedSpend);
+        if (remainder > 0.0001 || itemRows.length === 0) {
+          addAdvertMetric(aggregate, `__unattributed__:${metricDate}`, {
+            nmId: "__unattributed__",
+            date: metricDate,
+            sum: itemRows.length ? remainder : Number(day.sum || 0),
+            views: itemRows.length ? 0 : Number(day.views || 0),
+            clicks: itemRows.length ? 0 : Number(day.clicks || 0),
+            orders: itemRows.length ? 0 : Number(day.orders || 0),
+            sum_price: itemRows.length ? 0 : Number(day.sum_price || 0)
+          }, currency);
+        }
+      }
+    }
+  }
+
+  await query("DELETE FROM wb_cross_ad_metrics WHERE metric_date BETWEEN $1::date AND $2::date", [safeFrom, safeTo]);
+  for (const row of aggregate.values()) {
+    await query(
+      `INSERT INTO wb_cross_ad_metrics
+         (nm_id, metric_date, ad_spend, views, clicks, orders, ad_revenue, currency, updated_at)
+       VALUES ($1, $2::date, $3, $4, $5, $6, $7, $8, now())
+       ON CONFLICT (nm_id, metric_date) DO UPDATE SET
+         ad_spend = EXCLUDED.ad_spend,
+         views = EXCLUDED.views,
+         clicks = EXCLUDED.clicks,
+         orders = EXCLUDED.orders,
+         ad_revenue = EXCLUDED.ad_revenue,
+         currency = EXCLUDED.currency,
+         updated_at = now()`,
+      [row.nm_id, row.metric_date, row.ad_spend, row.views, row.clicks, row.orders, row.ad_revenue, row.currency]
+    );
+  }
+  const summary = await adSummary({ date: safeTo });
+  return {
+    accepted: true,
+    from: safeFrom,
+    to: safeTo,
+    campaigns: uniqueIds.length,
+    batches: batches.length,
+    metricsSaved: aggregate.size,
+    total: summary.total
+  };
+}
+
+async function listMetrics(nmId, options = {}) {
   await ensureSchema();
 
   const days = Math.max(1, Number(options.days || 7));
@@ -246,7 +496,7 @@ async function updateProduct(nmId, patch) {
     "vendor_code", "title", "brand", "subject_name", "image_url",
     "stock", "fbs_stock", "fbw_stock", "yesterday_sales",
     "commission_rate", "purchase_cost", "shipping_cost", "weight", "freight_rate",
-    "return_rate", "price", "ad_ratio", "competitor_compare", "strategy"
+    "tail_delivery_rate", "return_rate", "price", "ad_ratio", "competitor_compare", "strategy"
   ];
 
   await query(
@@ -607,6 +857,12 @@ async function fetchAllCards() {
   return cards;
 }
 
+function cardImageUrl(card) {
+  const photos = Array.isArray(card?.photos) ? card.photos : [];
+  const first = photos[0] || {};
+  return String(first.big || first.c516x688 || first.c246x328 || first.square || first.tm || "").trim();
+}
+
 function extractCardSkuMap(cards) {
   const skuToNm = new Map();
   const cardByNm = new Map();
@@ -661,19 +917,21 @@ async function syncCards() {
     const title = String(card.title || vendorCode || nmId);
     const brand = String(card.brand || "");
     const subjectName = String(card.subjectName || "");
+    const imageUrl = cardImageUrl(card);
 
     await query(
       `
-        INSERT INTO wb_cross_products (nm_id, vendor_code, title, brand, subject_name, stock, fbs_stock, fbw_stock, updated_at)
-        VALUES ($1, $2, $3, $4, $5, 0, 0, 0, now())
+        INSERT INTO wb_cross_products (nm_id, vendor_code, title, brand, subject_name, image_url, stock, fbs_stock, fbw_stock, updated_at)
+        VALUES ($1, $2, $3, $4, $5, $6, 0, 0, 0, now())
         ON CONFLICT (nm_id) DO UPDATE SET
           vendor_code = COALESCE(NULLIF(EXCLUDED.vendor_code, ''), wb_cross_products.vendor_code),
           title = COALESCE(NULLIF(EXCLUDED.title, ''), wb_cross_products.title),
           brand = COALESCE(NULLIF(EXCLUDED.brand, ''), wb_cross_products.brand),
           subject_name = COALESCE(NULLIF(EXCLUDED.subject_name, ''), wb_cross_products.subject_name),
+          image_url = COALESCE(NULLIF(wb_cross_products.image_url, ''), NULLIF(EXCLUDED.image_url, '')),
           updated_at = now()
       `,
-      [nmId, vendorCode, title, brand, subjectName]
+      [nmId, vendorCode, title, brand, subjectName, imageUrl]
     );
   }
 
@@ -724,13 +982,14 @@ async function syncStocks() {
     const sellerStock = Number((stockByNm.get(nmId) || new Map()).get("__total") || 0);
     await query(
       `
-        INSERT INTO wb_cross_products (nm_id, vendor_code, title, brand, subject_name, stock, fbs_stock, fbw_stock, updated_at)
-        VALUES ($1, $2, $3, $4, $5, $6, $6, 0, now())
+        INSERT INTO wb_cross_products (nm_id, vendor_code, title, brand, subject_name, image_url, stock, fbs_stock, fbw_stock, updated_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $7, 0, now())
         ON CONFLICT (nm_id) DO UPDATE SET
           vendor_code = COALESCE(NULLIF(EXCLUDED.vendor_code, ''), wb_cross_products.vendor_code),
           title = COALESCE(NULLIF(EXCLUDED.title, ''), wb_cross_products.title),
           brand = COALESCE(NULLIF(EXCLUDED.brand, ''), wb_cross_products.brand),
           subject_name = COALESCE(NULLIF(EXCLUDED.subject_name, ''), wb_cross_products.subject_name),
+          image_url = COALESCE(NULLIF(wb_cross_products.image_url, ''), NULLIF(EXCLUDED.image_url, '')),
           stock = EXCLUDED.stock,
           fbs_stock = EXCLUDED.fbs_stock,
           fbw_stock = 0,
@@ -742,6 +1001,7 @@ async function syncStocks() {
         String(card.title || card.vendorCode || nmId),
         String(card.brand || ""),
         String(card.subjectName || ""),
+        cardImageUrl(card),
         sellerStock
       ]
     );
@@ -893,6 +1153,8 @@ module.exports = {
   ensureSchema,
   dashboard,
   storeMetrics,
+  adSummary,
+  syncAds,
   listMetrics,
   refreshYesterdaySalesFromMetrics,
   getWbCrossOfficialCard,
@@ -900,6 +1162,7 @@ module.exports = {
   submitWbCrossUpdate,
   updateProduct,
   sync,
+  syncCards,
   syncStocks,
   syncSales
 };

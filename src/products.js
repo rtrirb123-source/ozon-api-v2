@@ -24,6 +24,9 @@ const PUBLIC_FIELDS = [
   "return_rate",
   "ad_ratio",
   "price",
+  "front_price",
+  "front_price_source",
+  "front_price_updated_at",
   "competitor_compare",
   "operator_name",
   "hidden"
@@ -71,6 +74,10 @@ const ALIASES = {
   ad_ratio: "ad_ratio",
   salePrice: "price",
   sellingPrice: "price",
+  frontPrice: "front_price",
+  front_price: "front_price",
+  frontPriceSource: "front_price_source",
+  frontPriceUpdatedAt: "front_price_updated_at",
   competitorCompare: "competitor_compare",
   competitor_compare: "competitor_compare",
   operator: "operator_name",
@@ -115,7 +122,8 @@ const NUMERIC_FIELDS = new Set([
   "tail_delivery_rate",
   "return_rate",
   "ad_ratio",
-  "price"
+  "price",
+  "front_price"
 ]);
 
 function normalizeNumeric(value) {
@@ -174,6 +182,9 @@ function productSelect() {
     return_rate,
     ad_ratio,
     price,
+    front_price,
+    front_price_source,
+    front_price_updated_at,
     competitor_compare,
     operator_name,
     COALESCE(hidden, false) AS hidden,
@@ -588,3 +599,4 @@ module.exports = {
   upsertMetrics,
   updateProduct
 };
+

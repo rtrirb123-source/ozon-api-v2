@@ -29,6 +29,9 @@ const config = {
   ozonApiKey: process.env.OZON_API_KEY || "",
   ozonPerformanceClientId: process.env.OZON_PERFORMANCE_CLIENT_ID || "",
   ozonPerformanceClientSecret: process.env.OZON_PERFORMANCE_CLIENT_SECRET || "",
+  automationEnabled: (process.env.AUTOMATION_ENABLED || "false").toLowerCase() === "true",
+  automationPollSeconds: Math.max(15, Number(process.env.AUTOMATION_POLL_SECONDS || 60)),
+  automationAllowPlatformWrites: (process.env.AUTOMATION_ALLOW_PLATFORM_WRITES || "false").toLowerCase() === "true",
   wbSupplierId: process.env.WB_SUPPLIER_ID || "",
   wbApiKey: process.env.WB_API_KEY || "",
   allowedOrigins: (process.env.ALLOWED_ORIGINS || "*")
@@ -37,7 +40,8 @@ const config = {
     .filter(Boolean),
   seerfarBaseUrl: process.env.SEERFAR_BASE_URL || "https://www.seerfar.cn",
   seerfarCookie: process.env.SEERFAR_COOKIE || "",
-  seerfarAuthorization: process.env.SEERFAR_AUTHORIZATION || ""
+  seerfarAuthorization: process.env.SEERFAR_AUTHORIZATION || "",
+  seerfarMonitorDateRange: process.env.SEERFAR_MONITOR_DATE_RANGE || "past_7_days"
 };
 
 module.exports = { config };

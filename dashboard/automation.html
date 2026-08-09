@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Ozon 自动运行系统</title>
+    <link rel="stylesheet" href="/automation.css?v=20260801-1" />
+    <link rel="stylesheet" href="/auth-shared.css?v=20260724-2" />
+    <script src="/auth-guard.js?v=20260724-2"></script>
+  </head>
+  <body>
+    <main class="automation-app">
+      <header class="automation-header">
+        <div>
+          <p class="eyebrow">OZON · AUTOMATION CONTROL</p>
+          <h1>自动运行系统</h1>
+          <p>独立调度、运行记录和安全开关，不改变现有看板业务。</p>
+        </div>
+        <button id="refreshBtn" type="button">刷新状态</button>
+      </header>
+
+      <section class="safety-grid" id="safetyGrid"></section>
+
+      <section class="panel">
+        <div class="panel-title">
+          <div><span>JOBS</span><h2>自动任务</h2></div>
+          <p>定时任务只有在服务器总开关开启后才会运行。</p>
+        </div>
+        <div id="jobGrid" class="job-grid"><p class="empty">正在加载任务……</p></div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-title">
+          <div><span>AUDIT LOG</span><h2>最近运行记录</h2></div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>任务</th><th>触发方式</th><th>状态</th><th>开始时间</th><th>耗时</th><th>结果/错误</th></tr></thead>
+            <tbody id="runBody"><tr><td colspan="6">正在加载……</td></tr></tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+    <div id="toast" class="toast" hidden></div>
+    <script src="/automation.js?v=20260801-1"></script>
+  </body>
+</html>

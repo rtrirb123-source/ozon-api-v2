@@ -3,6 +3,7 @@ const fs = require("fs");
 const path = require("path");
 const { config } = require("./config");
 const products = require("./products");
+const { query } = require("./db");
 
 const OZON_API_HOST = "api-seller.ozon.ru";
 const OZON_PERFORMANCE_HOST = "api-performance.ozon.ru";
@@ -189,9 +190,16 @@ async function fetchPerformanceCampaigns(token) {
   const campaigns = [];
   for (const state of states) {
     const response = await performanceRequestJson(`/api/client/campaign?state=${encodeURIComponent(state)}`, { token });
-    campaigns.push(...(response.list || []));
+    campaigns.push(...(response.list || []).map((campaign) => ({ ...campaign, requestedState: state })));
   }
   return campaigns;
+}
+
+function selectRunningProductCampaigns(campaigns) {
+  return (campaigns || []).filter((campaign) => (
+    String(campaign.requestedState || campaign.state || "").toUpperCase() === "CAMPAIGN_STATE_RUNNING"
+    && ["SKU", "ALL_SKU_PROMO"].includes(campaign.advObjectType)
+  ));
 }
 
 async function fetchCampaignProducts(token, campaignId) {
@@ -199,9 +207,97 @@ async function fetchCampaignProducts(token, campaignId) {
     const response = await performanceRequestJson(`/api/client/campaign/${encodeURIComponent(campaignId)}/v2/products`, { token });
     return (response.products || []).map((product) => String(product.sku || "")).filter(Boolean);
   } catch (error) {
-    if (error.statusCode === 400 || error.statusCode === 404) return [];
+    if (error.statusCode === 400 || error.statusCode === 404 || /not found|\u043d\u0435 \u043d\u0430\u0439\u0434\u0435\u043d\u0430/i.test(error.message || "")) return [];
     throw error;
   }
+}
+
+async function fetchCampaignProductDetails(token, campaignId) {
+  try {
+    const response = await performanceRequestJson(`/api/client/campaign/${encodeURIComponent(campaignId)}/v2/products`, { token });
+    return response.products || [];
+  } catch (error) {
+    if (error.statusCode === 400 || error.statusCode === 404 || /not found|\u043d\u0435 \u043d\u0430\u0439\u0434\u0435\u043d\u0430/i.test(error.message || "")) return [];
+    throw error;
+  }
+}
+
+function performanceMoney(value) {
+  const raw = Number(value || 0);
+  if (!Number.isFinite(raw)) return 0;
+  return Math.abs(raw) >= 1000000 ? raw / 1000000 : raw;
+}
+
+async function ensurePerformanceCampaignSchema() {
+  await query(`CREATE TABLE IF NOT EXISTS ozon_ad_campaigns (
+    campaign_id TEXT PRIMARY KEY,
+    title TEXT NOT NULL DEFAULT '',
+    state TEXT NOT NULL DEFAULT '',
+    adv_object_type TEXT NOT NULL DEFAULT '',
+    budget_type TEXT NOT NULL DEFAULT '',
+    daily_budget NUMERIC NOT NULL DEFAULT 0,
+    weekly_budget NUMERIC NOT NULL DEFAULT 0,
+    total_budget NUMERIC NOT NULL DEFAULT 0,
+    expense_strategy TEXT NOT NULL DEFAULT '',
+    controllable BOOLEAN NOT NULL DEFAULT FALSE,
+    raw JSONB NOT NULL DEFAULT '{}'::jsonb,
+    fetched_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`);
+  await query(`CREATE TABLE IF NOT EXISTS ozon_ad_campaign_products (
+    campaign_id TEXT NOT NULL REFERENCES ozon_ad_campaigns(campaign_id) ON DELETE CASCADE,
+    sku TEXT NOT NULL,
+    bid NUMERIC,
+    raw JSONB NOT NULL DEFAULT '{}'::jsonb,
+    fetched_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY(campaign_id, sku)
+  )`);
+  await query(`CREATE INDEX IF NOT EXISTS ozon_ad_campaign_products_sku_idx ON ozon_ad_campaign_products(sku)`);
+}
+
+async function syncPerformanceCampaignSnapshot() {
+  await ensurePerformanceCampaignSchema();
+  const token = await getPerformanceToken();
+  const campaigns = await fetchPerformanceCampaigns(token);
+  const controllableTypes = new Set(["SKU", "ALL_SKU_PROMO"]);
+  let productLinks = 0;
+  for (const campaign of campaigns) {
+    const campaignId = String(campaign.id || "");
+    if (!campaignId) continue;
+    const controllable = controllableTypes.has(String(campaign.advObjectType || ""));
+    await query(`INSERT INTO ozon_ad_campaigns
+      (campaign_id,title,state,adv_object_type,budget_type,daily_budget,weekly_budget,total_budget,expense_strategy,controllable,raw,fetched_at)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NOW())
+      ON CONFLICT(campaign_id) DO UPDATE SET title=EXCLUDED.title,state=EXCLUDED.state,
+        adv_object_type=EXCLUDED.adv_object_type,budget_type=EXCLUDED.budget_type,
+        daily_budget=EXCLUDED.daily_budget,weekly_budget=EXCLUDED.weekly_budget,total_budget=EXCLUDED.total_budget,
+        expense_strategy=EXCLUDED.expense_strategy,controllable=EXCLUDED.controllable,raw=EXCLUDED.raw,fetched_at=NOW()`, [
+      campaignId, campaign.title || "", campaign.requestedState || campaign.state || "", campaign.advObjectType || "",
+      campaign.budgetType || "", performanceMoney(campaign.dailyBudget), performanceMoney(campaign.weeklyBudget),
+      performanceMoney(campaign.budget), campaign.expenseStrategy || "", controllable, JSON.stringify(campaign)
+    ]);
+    await query(`DELETE FROM ozon_ad_campaign_products WHERE campaign_id=$1`, [campaignId]);
+    if (!controllable) continue;
+    for (const item of await fetchCampaignProductDetails(token, campaignId)) {
+      const sku = String(item.sku || "");
+      if (!sku) continue;
+      await query(`INSERT INTO ozon_ad_campaign_products(campaign_id,sku,bid,raw,fetched_at)
+        VALUES ($1,$2,$3,$4,NOW()) ON CONFLICT(campaign_id,sku) DO UPDATE SET
+        bid=EXCLUDED.bid,raw=EXCLUDED.raw,fetched_at=NOW()`, [campaignId, sku, item.bid == null ? null : performanceMoney(item.bid), JSON.stringify(item)]);
+      productLinks += 1;
+    }
+  }
+  const campaignIds = campaigns.map((item) => String(item.id || "")).filter(Boolean);
+  if (campaignIds.length) await query(`DELETE FROM ozon_ad_campaigns WHERE NOT (campaign_id = ANY($1::text[]))`, [campaignIds]);
+  const running = campaigns.filter((item) => String(item.requestedState || item.state || "") === "CAMPAIGN_STATE_RUNNING");
+  return {
+    campaigns: campaigns.length,
+    running: running.length,
+    runningControllable: running.filter((item) => controllableTypes.has(String(item.advObjectType || ""))).length,
+    productLinks,
+    types: Object.fromEntries(Object.entries(campaigns.reduce((acc, item) => {
+      const key = String(item.advObjectType || "UNKNOWN"); acc[key] = (acc[key] || 0) + 1; return acc;
+    }, {})).sort())
+  };
 }
 
 async function requestPerformanceReport(token, campaigns, from, to) {
@@ -299,7 +395,7 @@ async function fetchPerformanceAdSpend({ days = 30, lookup }) {
 
   const token = await getPerformanceToken();
   const campaigns = await fetchPerformanceCampaigns(token);
-  const skuCampaigns = campaigns.filter((campaign) => ["SKU", "ALL_SKU_PROMO"].includes(campaign.advObjectType));
+  const skuCampaigns = selectRunningProductCampaigns(campaigns);
   const campaignIds = skuCampaigns.map((campaign) => String(campaign.id)).filter(Boolean);
   if (!campaignIds.length) return { rows: [], warning: "No SKU performance campaigns found" };
 
@@ -1490,5 +1586,7 @@ module.exports = {
   previewOzonAnalytics,
   submitOzonProductUpdate,
   syncOzonMetrics,
-  syncOzonProducts
+  syncOzonProducts,
+  syncPerformanceCampaignSnapshot,
+  selectRunningProductCampaigns
 };

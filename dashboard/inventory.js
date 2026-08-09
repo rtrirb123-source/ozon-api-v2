@@ -210,13 +210,29 @@ function matrixValues(item) {
   return { fbo, fboTransit, fbw, warehouses, manualFbsTotal, unallocated, overAllocated, total,
     dailyDemand, replenish60, replenish90, shortage: replenish60 > 0 };
 }
+function inventorySearchText(item) {
+  const values = [
+    item.offer_id, item.product_id, item.ozon_sku, item.title, item.barcode,
+    item.source_label, sourceLabel(item),
+  ];
+  for (const link of item.links || []) {
+    values.push(
+      link.nm_id, link.product_id, link.vendor_code, link.title, link.name,
+      link.barcode, link.barcode_sku, link.barcodeSku, link.sku,
+      link.market, link.source_label,
+    );
+    for (const row of link.warehouses || link.stocks || []) {
+      values.push(row.barcode, row.barcode_sku, row.sku, row.warehouse_name, row.name);
+    }
+  }
+  return values.map((value) => text(value).toLowerCase()).join(" ");
+}
 function visibleProducts() {
   const term = state.search.trim().toLowerCase();
   return state.products.filter((item) => {
     if (!state.showHidden && item.hidden) return false;
     if (!term) return true;
-    return [item.offer_id, item.product_id, item.ozon_sku, item.title]
-      .some((value) => text(value).toLowerCase().includes(term));
+    return inventorySearchText(item).includes(term);
   });
 }
 function renderStats(summary) {
