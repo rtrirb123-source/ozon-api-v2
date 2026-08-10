@@ -31,6 +31,7 @@ const contentStrategy = require("./content_strategy");
 const operationQueue = require("./operation_queue");
 const executionGuard = require("./execution_guard");
 const ozonBackendArchitecture = require("./ozon_backend_architecture");
+const storefrontPriceStatus = require("./storefront_price_status");
 
 const startedAt = new Date().toISOString();
 
@@ -350,6 +351,12 @@ async function route(req, res) {
     }
     if (url.pathname === "/api/automation/backend-architecture" && req.method === "GET") {
       return sendJson(req, res, 200, { ok: true, data: ozonBackendArchitecture.overview() });
+    }
+    if (url.pathname === "/api/automation/storefront-prices" && req.method === "GET") {
+      return sendJson(req, res, 200, {
+        ok: true,
+        data: await storefrontPriceStatus.status({ freshnessHours: url.searchParams.get("freshness_hours") || 36 })
+      });
     }
     if (url.pathname === "/api/automation/daily-profit" && req.method === "GET") {
       return sendJson(req, res, 200, {
