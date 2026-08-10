@@ -132,12 +132,21 @@ async function ensureSchema() {
       tail_delivery_rate NUMERIC DEFAULT 20,
       return_rate NUMERIC,
       price NUMERIC,
+      front_price NUMERIC,
+      front_price_source TEXT,
+      front_price_updated_at TIMESTAMPTZ,
       ad_ratio NUMERIC,
       competitor_compare TEXT,
       strategy TEXT,
       created_at TIMESTAMPTZ DEFAULT now(),
       updated_at TIMESTAMPTZ DEFAULT now()
     )
+  `);
+  await query(`
+    ALTER TABLE wb_cross_products
+    ADD COLUMN IF NOT EXISTS front_price NUMERIC,
+    ADD COLUMN IF NOT EXISTS front_price_source TEXT,
+    ADD COLUMN IF NOT EXISTS front_price_updated_at TIMESTAMPTZ
   `);
 
   await query(`
@@ -496,7 +505,8 @@ async function updateProduct(nmId, patch) {
     "vendor_code", "title", "brand", "subject_name", "image_url",
     "stock", "fbs_stock", "fbw_stock", "yesterday_sales",
     "commission_rate", "purchase_cost", "shipping_cost", "weight", "freight_rate",
-    "tail_delivery_rate", "return_rate", "price", "ad_ratio", "competitor_compare", "strategy"
+    "tail_delivery_rate", "return_rate", "price", "front_price", "front_price_source",
+    "front_price_updated_at", "ad_ratio", "competitor_compare", "strategy"
   ];
 
   await query(

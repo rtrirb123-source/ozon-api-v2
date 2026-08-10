@@ -448,7 +448,8 @@ async function resolveMetricDate(requestedDate) {
 
 function productSelect() {
   return `id, nm_id, vendor_code, title, brand, subject_name, image_url, stock, fbs_stock, fbw_stock,
-    yesterday_sales, commission_rate, purchase_cost, shipping_cost, weight, freight_rate, tail_delivery_rate, return_rate, price, ad_ratio, competitor_compare,
+    yesterday_sales, commission_rate, purchase_cost, shipping_cost, weight, freight_rate, tail_delivery_rate, return_rate, price,
+    front_price, front_price_source, front_price_updated_at, ad_ratio, competitor_compare,
     strategy, created_at, updated_at`;
 }
 
@@ -491,7 +492,7 @@ async function dashboard({ date = "" } = {}) {
 }
 
 async function updateProduct(nmId, payload) {
-  const allowed = ["commission_rate", "purchase_cost", "shipping_cost", "weight", "freight_rate", "tail_delivery_rate", "return_rate", "price", "ad_ratio", "competitor_compare", "strategy", "image_url"];
+  const allowed = ["commission_rate", "purchase_cost", "shipping_cost", "weight", "freight_rate", "tail_delivery_rate", "return_rate", "price", "front_price", "front_price_source", "front_price_updated_at", "ad_ratio", "competitor_compare", "strategy", "image_url"];
   const fields = Object.keys(payload || {}).filter(f => allowed.includes(f));
   if (!fields.length) return null;
   const params = fields.map(f => payload[f]);

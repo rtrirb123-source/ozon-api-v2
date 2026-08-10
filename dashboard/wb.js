@@ -446,6 +446,7 @@ function renderTable() {
       <th>运费系数</th>
       <th>退货率</th>
       <th>售价</th>
+      <th>前台售价</th>
       <th>预期利润</th>
       <th class="competitor-cell">竞品对比</th>
       <th>产品策略</th>
@@ -475,13 +476,14 @@ function renderTable() {
       <td>${renderInput(item, "freight_rate")}</td>
       <td>${renderInput(item, "return_rate")}</td>
       <td>${renderInput(item, "price")}</td>
+      <td title="${escapeHtml(item.front_price_source || "")}${item.front_price_updated_at ? ` · ${escapeHtml(new Date(item.front_price_updated_at).toLocaleString())}` : ""}">${item.front_price == null || item.front_price === "" ? "-" : `${escapeHtml(formatMoney(item.front_price))} ₽`}</td>
       <td class="profit-cell">${escapeHtml(expectedProfit(item))}</td>
       <td class="competitor-cell">${renderText(item, "competitor_compare")}</td>
       <td>${renderText(item, "strategy")}</td>
     </tr>
   `);
 
-  $("productBody").innerHTML = rows.join("") || `<tr><td colspan="16">暂无 WB 商品数据。WB API 可能仍在限流，稍后点击“同步WB”。</td></tr>`;
+  $("productBody").innerHTML = rows.join("") || `<tr><td colspan="17">暂无 WB 商品数据。WB API 可能仍在限流，稍后点击“同步WB”。</td></tr>`;
 }
 
 function renderRevenueTrend() {

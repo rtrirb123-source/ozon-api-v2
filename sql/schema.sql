@@ -108,6 +108,9 @@ CREATE TABLE IF NOT EXISTS wb_products (
   stock NUMERIC,
   yesterday_sales NUMERIC,
   price NUMERIC,
+  front_price NUMERIC,
+  front_price_source TEXT,
+  front_price_updated_at TIMESTAMPTZ,
   purchase_cost NUMERIC,
   ad_ratio NUMERIC,
   tail_delivery_rate NUMERIC DEFAULT 14,
@@ -166,7 +169,10 @@ ADD COLUMN IF NOT EXISTS shipping_cost NUMERIC,
 ADD COLUMN IF NOT EXISTS fbs_stock NUMERIC,
 ADD COLUMN IF NOT EXISTS fbw_stock NUMERIC,
 ADD COLUMN IF NOT EXISTS commission_rate NUMERIC,
-ADD COLUMN IF NOT EXISTS return_rate NUMERIC;
+ADD COLUMN IF NOT EXISTS return_rate NUMERIC,
+ADD COLUMN IF NOT EXISTS front_price NUMERIC,
+ADD COLUMN IF NOT EXISTS front_price_source TEXT,
+ADD COLUMN IF NOT EXISTS front_price_updated_at TIMESTAMPTZ;
 
 CREATE TABLE IF NOT EXISTS wb_product_mappings (
   id BIGSERIAL PRIMARY KEY,
