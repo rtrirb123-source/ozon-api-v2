@@ -3,6 +3,7 @@ const fs = require("fs");
 const path = require("path");
 const { config } = require("./config");
 const products = require("./products");
+const inventory = require("./inventory");
 const { query } = require("./db");
 
 const OZON_API_HOST = "api-seller.ozon.ru";
@@ -1114,11 +1115,82 @@ function allocateQuantity(total, buckets) {
     .map(({ key, qty }) => ({ key, qty }));
 }
 
+function attachUnallocatedPool(data, unallocatedSnapshot) {
+  const ageSeconds = Number(data.cache_age_seconds || 0);
+  const timeFresh = !data.cached || ageSeconds <= 24 * 60 * 60;
+  const sourceComplete = data.source_complete === true;
+  const dataFresh = timeFresh && sourceComplete;
+  const days = Math.max(1, Number(data.days || 30));
+  return {
+    ...data,
+    data_fresh: dataFresh,
+    allocation_allowed: dataFresh,
+    source_complete: sourceComplete,
+    freshness_limit_hours: 24,
+    items: (data.items || []).map((item) => {
+      const unallocated = unallocatedSnapshot.byOffer.get(String(item.offer_id)) || { pieces: 0, boxes: 0 };
+      const pool = Number(unallocated.pieces || 0);
+      const baseClusters = item.target_demand_clusters || item.recommended_demand_clusters || [];
+      const deficits = baseClusters.map((cluster) => {
+        const current = Number(cluster.current_stock || 0);
+        const requested = Number(cluster.requested_stock || 0);
+        const transit = Number(cluster.transit_stock || 0);
+        const inbound = requested + transit;
+        const target = Number(cluster.target_qty || 0);
+        const gap = Math.max(0, target - current - inbound);
+        const daily = Number(cluster.sales_basis || 0) / days;
+        const coverDays = daily > 0 ? (current + inbound) / daily : null;
+        const outOfStock = Number(cluster.sales_basis || 0) > 0 && current + inbound <= 0;
+        const shortageLevel = outOfStock ? "out_of_stock" : coverDays !== null && coverDays < 3
+          ? "under_3_days" : coverDays !== null && coverDays < 7 ? "under_7_days" : "low";
+        return { ...cluster, inbound_stock: inbound, qty: gap, cover_days: coverDays === null ? null : Number(coverDays.toFixed(1)), out_of_stock: outOfStock, shortage_level: shortageLevel };
+      }).filter((cluster) => cluster.qty > 0).sort((a, b) => {
+        const rank = { out_of_stock: 0, under_3_days: 1, under_7_days: 2, low: 3 };
+        return rank[a.shortage_level] - rank[b.shortage_level]
+          || Number(b.sales_basis || 0) - Number(a.sales_basis || 0)
+          || Number(b.qty || 0) - Number(a.qty || 0);
+      });
+      let remainingPool = dataFresh ? pool : 0;
+      const allocations = deficits.map((cluster) => {
+        const allocateQty = Math.min(Number(cluster.qty || 0), remainingPool);
+        remainingPool -= allocateQty;
+        return { ...cluster, allocate_from_unallocated: allocateQty, remaining_gap: Number(cluster.qty || 0) - allocateQty };
+      });
+      const recommendedTotal = deficits.reduce((sum, cluster) => sum + Number(cluster.qty || 0), 0);
+      const allocatedTotal = allocations.reduce((sum, cluster) => sum + Number(cluster.allocate_from_unallocated || 0), 0);
+      const shortfall = Math.max(0, recommendedTotal - allocatedTotal);
+      const totalAvailableStock = Number(item.stock_total || 0) + pool;
+      const totalCoverDays = Number(item.avg_daily || 0) > 0 ? totalAvailableStock / Number(item.avg_daily) : null;
+      let suggestion = item.suggestion;
+      if (!sourceComplete) suggestion = "Ozon地区库存源不完整，禁止生成分配数量";
+      else if (!timeFresh) suggestion = "地区补仓数据超过24小时，请刷新后分配";
+      else if (recommendedTotal > 0 && pool <= 0) suggestion = `地区缺口${recommendedTotal}件，未分配库存为0，需要采购或调拨`;
+      else if (shortfall > 0) suggestion = `从未分配库存分配${allocatedTotal}件，仍缺${shortfall}件`;
+      else if (allocatedTotal > 0) suggestion = `从未分配库存分配${allocatedTotal}件，可覆盖当前地区缺口`;
+      return {
+        ...item,
+        unallocated_stock: pool,
+        unallocated_boxes: Number(unallocated.boxes || 0),
+        total_available_stock: totalAvailableStock,
+        total_available_cover_days: totalCoverDays === null ? null : Number(totalCoverDays.toFixed(1)),
+        recommended_total: recommendedTotal,
+        recommended_demand_clusters: allocations,
+        regional_out_of_stock_count: deficits.filter((cluster) => cluster.out_of_stock).length,
+        unallocated_allocated_total: allocatedTotal,
+        unallocated_remaining: Math.max(0, pool - allocatedTotal),
+        replenishment_shortfall: shortfall,
+        suggestion,
+      };
+    })
+  };
+}
+
 async function fetchClusterStocksBySku(skus) {
   const cleanSkus = Array.from(
     new Set((skus || []).map((sku) => String(sku || "").trim()).filter(Boolean))
   );
   const bySku = new Map();
+  const errors = [];
   const chunkSize = 20;
 
   for (let index = 0; index < cleanSkus.length; index += chunkSize) {
@@ -1136,6 +1208,7 @@ async function fetchClusterStocksBySku(skus) {
         });
       } catch (error) {
         console.warn("[cluster-stocks]", error.message);
+        errors.push(error.message);
         break;
       }
       const rows = response.items || [];
@@ -1162,7 +1235,7 @@ async function fetchClusterStocksBySku(skus) {
     }
   }
 
-  return bySku;
+  return { bySku, errors };
 }
 
 async function fetchFboPostings({ days = 30 } = {}) {
@@ -1393,6 +1466,14 @@ function compactFboReplenishmentData(data) {
       target_days: item.target_days,
       recommended_total: item.recommended_total,
       recommended_demand_clusters: item.recommended_demand_clusters,
+      unallocated_stock: item.unallocated_stock,
+      unallocated_boxes: item.unallocated_boxes,
+      total_available_stock: item.total_available_stock,
+      total_available_cover_days: item.total_available_cover_days,
+      regional_out_of_stock_count: item.regional_out_of_stock_count,
+      unallocated_allocated_total: item.unallocated_allocated_total,
+      unallocated_remaining: item.unallocated_remaining,
+      replenishment_shortfall: item.replenishment_shortfall,
       cluster_stock_total: item.cluster_stock_total,
       suggestion: item.suggestion,
       priority: item.priority
@@ -1405,6 +1486,7 @@ async function listFboClusterReplenishment({ days = 30, targetDays = 30, offers 
   const safeTargetDays = Math.min(Math.max(Number(targetDays) || 30, 7), 90);
   const cacheKey = fboReplenishmentCacheKey({ days: safeDays, targetDays: safeTargetDays, offers });
   const cached = readFboReplenishmentCache(cacheKey, { allowStale: true });
+  const unallocatedSnapshot = await inventory.listUnallocatedAssignments();
   if (refresh && cached && !background) {
     const refreshStatus = startFboReplenishmentRefresh(cacheKey, {
       days: safeDays,
@@ -1417,9 +1499,13 @@ async function listFboClusterReplenishment({ days = 30, targetDays = 30, offers 
       refresh_status: refreshStatus,
       force_refresh: Boolean(force)
     };
-    return compact ? compactFboReplenishmentData(response) : response;
+    const enriched = attachUnallocatedPool(response, unallocatedSnapshot);
+    return compact ? compactFboReplenishmentData(enriched) : enriched;
   }
-  if (!refresh && cached && !force) return compact ? compactFboReplenishmentData(cached) : cached;
+  if (!refresh && cached && !force) {
+    const enriched = attachUnallocatedPool(cached, unallocatedSnapshot);
+    return compact ? compactFboReplenishmentData(enriched) : enriched;
+  }
 
   const wantedOffers = new Set(
     String(offers || "")
@@ -1442,7 +1528,8 @@ async function listFboClusterReplenishment({ days = 30, targetDays = 30, offers 
     if (product.ozon_sku) stockSkus.add(String(product.ozon_sku));
     if (postingSummary?.ozon_sku) stockSkus.add(String(postingSummary.ozon_sku));
   }
-  const clusterStockBySku = await fetchClusterStocksBySku(Array.from(stockSkus));
+  const clusterStockResult = await fetchClusterStocksBySku(Array.from(stockSkus));
+  const clusterStockBySku = clusterStockResult.bySku;
   const results = [];
 
   for (const product of filteredProducts) {
@@ -1478,15 +1565,17 @@ async function listFboClusterReplenishment({ days = 30, targetDays = 30, offers 
     const targetDemandClusters = allocateQuantity(targetStock, demandBuckets).map((item) => {
       const stock = clusterStocks[item.key] || {};
       const currentStock = Number(stock.available || 0);
-      const qty = Math.max(0, item.qty - currentStock);
+      const requestedStock = Number(stock.requested || 0);
+      const transitStock = Number(stock.transit || 0);
+      const qty = Math.max(0, item.qty - currentStock - requestedStock - transitStock);
       return {
         cluster: item.key,
         qty,
         target_qty: item.qty,
         current_stock: currentStock,
         valid_stock: Number(stock.valid || 0),
-        requested_stock: Number(stock.requested || 0),
-        transit_stock: Number(stock.transit || 0),
+        requested_stock: requestedStock,
+        transit_stock: transitStock,
         sales_basis: Number(demandBuckets[item.key] || 0)
       };
     });
@@ -1564,6 +1653,8 @@ async function listFboClusterReplenishment({ days = 30, targetDays = 30, offers 
     days: safeDays,
     target_days: safeTargetDays,
     postings_fetched: postings.length,
+    source_complete: clusterStockResult.errors.length === 0,
+    source_errors: Array.from(new Set(clusterStockResult.errors)),
     count: results.length,
     items: results.sort(
       (a, b) =>
@@ -1574,7 +1665,8 @@ async function listFboClusterReplenishment({ days = 30, targetDays = 30, offers 
     )
   };
   writeFboReplenishmentCache(cacheKey, data);
-  return compact ? compactFboReplenishmentData(data) : data;
+  const enriched = attachUnallocatedPool(data, unallocatedSnapshot);
+  return compact ? compactFboReplenishmentData(enriched) : enriched;
 }
 
 module.exports = {

@@ -3,6 +3,7 @@ const { config } = require("./config");
 const { query, getPool } = require("./db");
 
 const cache = { payload: null, fetchedAt: 0 };
+const unallocatedCache = { payload: null, fetchedAt: 0, inFlight: null };
 const refreshState = globalThis.__inventoryRefreshState || (globalThis.__inventoryRefreshState = {
   running: false,
   lastStartedAt: null,
@@ -800,6 +801,69 @@ async function listUnallocatedStockLines() {
     ORDER BY box_mark, source_file, source_sheet, source_row, id
   `);
   return result.rows;
+}
+
+async function listUnallocatedAssignments({ refresh = false } = {}) {
+  if (!refresh && unallocatedCache.payload && Date.now() - unallocatedCache.fetchedAt < CACHE_MS) {
+    return unallocatedCache.payload;
+  }
+  if (!refresh && unallocatedCache.inFlight) return unallocatedCache.inFlight;
+
+  const load = async () => {
+    await ensureSchema();
+    const [ozonProducts, wbProducts, wbCrossProducts, links, barcodeRows, unallocatedRows] = await Promise.all([
+      listProducts(true), listWbProducts("wb_products"), listWbProducts("wb_cross_products"),
+      listLinks(), listBarcodes(), listUnallocatedStockLines()
+    ]);
+    const barcodeByOffer = new Map((barcodeRows || []).map((row) => [String(row.offer_id), String(row.barcode || "")]));
+    const vendorByCard = new Map();
+    for (const row of wbProducts || []) vendorByCard.set(`wb:${row.nm_id}`, row.vendor_code || "");
+    for (const row of wbCrossProducts || []) vendorByCard.set(`wb_cross:${row.nm_id}`, row.vendor_code || "");
+    const vendorCodesByOffer = new Map();
+    for (const link of links || []) {
+      const offerId = String(link.offer_id);
+      const values = vendorCodesByOffer.get(offerId) || [];
+      const vendorCode = vendorByCard.get(`${link.market}:${link.nm_id}`);
+      if (vendorCode) values.push(vendorCode);
+      vendorCodesByOffer.set(offerId, values);
+    }
+    const bySku = new Map();
+    for (const row of unallocatedRows || []) {
+      const key = normalizeInventorySku(row.normalized_sku || row.sku);
+      if (!key) continue;
+      const value = bySku.get(key) || { pieces: 0, boxes: 0 };
+      value.pieces += Number(row.pieces || 0);
+      value.boxes += Number(row.box_count || 0);
+      bySku.set(key, value);
+    }
+    const byOffer = new Map();
+    const matchedSkus = new Set();
+    for (const product of ozonProducts.filter((item) => item.source_market === "ozon")) {
+      const offerId = String(product.offer_id);
+      const keys = [barcodeByOffer.get(offerId), offerId, ...(vendorCodesByOffer.get(offerId) || [])]
+        .map(normalizeInventorySku).filter(Boolean);
+      const aggregate = { pieces: 0, boxes: 0 };
+      for (const key of new Set(keys)) {
+        if (matchedSkus.has(key) || !bySku.has(key)) continue;
+        const value = bySku.get(key);
+        aggregate.pieces += Number(value.pieces || 0);
+        aggregate.boxes += Number(value.boxes || 0);
+        matchedSkus.add(key);
+      }
+      byOffer.set(offerId, aggregate);
+    }
+    return { byOffer, fetchedAt: new Date().toISOString() };
+  };
+
+  unallocatedCache.inFlight = load();
+  try {
+    const payload = await unallocatedCache.inFlight;
+    unallocatedCache.payload = payload;
+    unallocatedCache.fetchedAt = Date.now();
+    return payload;
+  } finally {
+    unallocatedCache.inFlight = null;
+  }
 }
 
 async function listArrivedBoxMarks(client = null) {
@@ -1629,4 +1693,4 @@ async function createProductFromWbCard({ market = "wb", nm_id }) {
   };
 }
 
-module.exports = { dashboard, refreshOzonStockSnapshot, importUnallocatedStock, importFirstLegTransit, setBarcode, setWbCardWarehouseStock, setManualWarehouseFbsStock, setManualWarehouseActualStock, setFirstLegTransit, setManualDailyShipment, setManualFbsStock, setHidden, createLink, deleteLink, searchCards, createProductFromWbCard, productCandidates, refreshStatus, startBackgroundRefresh };
+module.exports = { dashboard, listUnallocatedAssignments, refreshOzonStockSnapshot, importUnallocatedStock, importFirstLegTransit, setBarcode, setWbCardWarehouseStock, setManualWarehouseFbsStock, setManualWarehouseActualStock, setFirstLegTransit, setManualDailyShipment, setManualFbsStock, setHidden, createLink, deleteLink, searchCards, createProductFromWbCard, productCandidates, refreshStatus, startBackgroundRefresh };

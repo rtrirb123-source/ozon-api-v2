@@ -2,6 +2,7 @@ const { query } = require("./db");
 const { getRubRate } = require("./exchange");
 const { landedUnitCost, readSettings } = require("./daily_profit");
 const actualCosts = require("./actual_costs");
+const inventory = require("./inventory");
 
 const number = (value) => Number.isFinite(Number(value)) ? Number(value) : 0;
 const round = (value, digits = 2) => Number(number(value).toFixed(digits));
@@ -88,7 +89,9 @@ function profitZone(ratio, rules) {
 function recommendPrice(product, metrics, rates, settings, ruleInput = {}, actual = {}) {
   const rules = normalizeRules(ruleInput);
   const economics = unitEconomics(product, rates, settings, rules, actual);
-  const stock = number(product.fbo_stock) + number(product.fbs_stock);
+  const fboFbsStock = number(product.fbo_stock) + number(product.fbs_stock);
+  const unallocatedStock = number(product.unallocated_stock);
+  const stock = fboFbsStock + unallocatedStock;
   const sales3 = number(metrics.sales_3d);
   const previous3 = number(metrics.sales_prev_3d);
   const sales5 = number(metrics.sales_5d);
@@ -165,7 +168,8 @@ function recommendPrice(product, metrics, rates, settings, ruleInput = {}, actua
     title: product.title || "",
     imageUrl: product.image_url || "",
     operator: product.operator_name || "",
-    stock: round(stock), sales3: round(sales3), previous3: round(previous3), sales5: round(sales5),
+    stock: round(stock), fboFbsStock: round(fboFbsStock), unallocatedStock: round(unallocatedStock),
+    totalAvailableStock: round(stock), sales3: round(sales3), previous3: round(previous3), sales5: round(sales5),
     sales7: round(sales7), previous7: round(previous7),
     stockDays: stockDays === null ? null : round(stockDays, 1), trend: round(trend * 100, 1), trend3: round(trend3 * 100, 1),
     currentPrice: round(economics.priceRub), suggestedPrice: round(suggestedPrice), minimumPrice: null,
@@ -191,7 +195,7 @@ function recommendPrice(product, metrics, rates, settings, ruleInput = {}, actua
 
 async function recommendations(ruleInput = {}) {
   const rules = normalizeRules(ruleInput);
-  const [result, rates, actualSnapshot] = await Promise.all([
+  const [result, rates, actualSnapshot, unallocatedSnapshot] = await Promise.all([
     query(`
       SELECT p.*,
         COALESCE(SUM(m.sales_units) FILTER (WHERE m.metric_date >= (NOW() AT TIME ZONE 'Asia/Shanghai')::date - 2), 0) AS sales_3d,
@@ -206,11 +210,15 @@ async function recommendations(ruleInput = {}) {
       GROUP BY p.id
       ORDER BY p.updated_at DESC
     `),
-    getRubRate(), actualCosts.snapshot(),
+    getRubRate(), actualCosts.snapshot(), inventory.listUnallocatedAssignments(),
   ]);
   const settings = readSettings();
   const actualByOffer = new Map(actualSnapshot.rows.map((row) => [row.offerId, row]));
-  const rows = result.rows.map((product) => recommendPrice(product, product, rates, settings, rules, actualByOffer.get(product.offer_id) || {}));
+  const rows = result.rows.map((product) => {
+    const unallocated = unallocatedSnapshot.byOffer.get(String(product.offer_id)) || { pieces: 0, boxes: 0 };
+    const enriched = { ...product, unallocated_stock: Number(unallocated.pieces || 0), unallocated_boxes: Number(unallocated.boxes || 0) };
+    return recommendPrice(enriched, enriched, rates, settings, rules, actualByOffer.get(product.offer_id) || {});
+  });
   return {
     generatedAt: new Date().toISOString(), mode: "advisory", platformWrite: false,
     rules, parameters: { ...settings, rubToCny: rates.rubToCny, usdToCny: rates.usdToCny },
