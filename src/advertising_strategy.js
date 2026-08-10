@@ -63,17 +63,21 @@ function recommend(product, pricing = {}, campaigns = []) {
   if (adRate === null) {
     action = "wait_data";
     reason = "缺少近14天广告消耗数据，不执行预算或出价操作";
-  } else if (pricing.blocked || costProfitRatio === null || costProfitRatio < 0 || adRate >= 25) {
-    action = "reduce_or_pause";
-    reason = pricing.blocked || costProfitRatio === null ? "成本利润率数据不完整，广告执行被拦截" : costProfitRatio < 0 ? "当前净利润为负，建议降低预算或暂停" : "广告费率达到25%以上，建议降低预算或暂停";
+  } else if (pricing.blocked || costProfitRatio === null) {
+    action = "blocked";
+    reason = "成本利润率数据不完整，拦截该商品广告执行";
+    riskLevel = "high";
+  } else if (costProfitRatio < 0 || adRate >= 25) {
+    action = "pause_product";
+    reason = costProfitRatio < 0 ? "当前净利润为负，建议暂停该商品广告" : "广告费率达到25%以上，建议暂停该商品广告";
     riskLevel = "high";
   } else if (profitZone === "safe" && adRate <= 10 && stock > Math.max(14, sales7 * 2)) {
-    action = "increase_budget";
-    reason = "成本利润率在80%以上安全区，广告费率和库存满足放量条件，可小幅增加预算";
+    action = "increase_bid";
+    reason = "成本利润率在80%以上安全区，广告费率和库存满足放量条件，可小幅提高该商品出价";
     riskLevel = "medium";
   } else if (adRate > 15 || profitZone === "danger") {
-    action = "reduce_budget";
-    reason = adRate > 15 ? "广告费率偏高，建议小幅降低预算" : "成本利润率低于50%危险线，建议收紧广告投入";
+    action = "reduce_bid";
+    reason = adRate > 15 ? "广告费率偏高，建议小幅降低该商品出价" : "成本利润率低于50%危险线，建议收紧该商品广告投入";
     riskLevel = "medium";
   }
 
@@ -84,16 +88,55 @@ function recommend(product, pricing = {}, campaigns = []) {
     riskLevel = "medium";
   }
   const currentBudget = activeCampaign ? number(activeCampaign.weekly_budget || activeCampaign.daily_budget || activeCampaign.total_budget) : null;
-  const targetBudget = currentBudget === null ? null : Number((currentBudget * (action === "increase_budget" ? 1.1 : action === "reduce_budget" ? 0.9 : action === "reduce_or_pause" ? 0.75 : 1)).toFixed(2));
+  const currentBid = activeCampaign?.bid == null ? null : number(activeCampaign.bid);
+  const targetBid = currentBid === null || !["increase_bid", "reduce_bid", "pause_product"].includes(action) ? null
+    : action === "pause_product" ? 0
+      : Number((currentBid * (action === "increase_bid" ? 1.1 : 0.9)).toFixed(2));
 
   return {
     offerId: product.offerId, sku: product.sku, title: product.title, adRate14: adRate,
     adSpend14Rub: product.adSpend14Rub, costProfitRatio: costProfitRatio ?? null, profitZone, stock, sales7,
     campaignId: activeCampaign?.campaign_id || "", campaignTitle: activeCampaign?.campaign_title || "",
-    currentBudget, currentBid: activeCampaign?.bid == null ? null : number(activeCampaign.bid), targetBudget,
+    currentBudget, currentBid, targetBid, targetBudget: null,
     action, reason, riskLevel, executable: false,
     executionBlock: "Performance API写接口尚未验证；所有动作仅进入待执行队列"
   };
+}
+
+function recommendCampaignBudgets(productRows = [], campaignInventory = []) {
+  return campaignInventory.filter((campaign) => campaign.kind === "product_campaign" && campaign.running).map((campaign) => {
+    const linked = productRows.filter((row) => row.campaignId === campaign.campaignId);
+    const covered = linked.filter((row) => row.adRate14 !== null);
+    const positive = covered.filter((row) => row.action === "increase_bid");
+    const negative = covered.filter((row) => ["reduce_bid", "pause_product"].includes(row.action));
+    const minimumCoverage = Math.max(2, Math.ceil(number(campaign.productLinks) * 0.5));
+    const currentBudget = number(campaign.weeklyBudget || campaign.dailyBudget || campaign.totalBudget);
+    let action = "hold_budget";
+    let reason = "活动内商品信号分化，保持当前总预算";
+    let targetBudget = null;
+    let riskLevel = "low";
+
+    if (covered.length < minimumCoverage) {
+      action = "wait_campaign_data";
+      reason = `仅${covered.length}/${campaign.productLinks}个关联商品有广告数据，不调整活动总预算`;
+    } else if (negative.length / covered.length >= 0.6) {
+      action = "reduce_budget";
+      targetBudget = Number((currentBudget * 0.9).toFixed(2));
+      reason = `${negative.length}/${covered.length}个有数据商品需收紧，活动总预算只生成一条10%下调建议`;
+      riskLevel = "medium";
+    } else if (positive.length / covered.length >= 0.6) {
+      action = "review_budget_capacity";
+      reason = `${positive.length}/${covered.length}个有数据商品可放量，但缺少活动预算利用率，先核实预算是否受限`;
+      riskLevel = "medium";
+    }
+
+    return {
+      campaignId: campaign.campaignId, title: campaign.title, action, reason, riskLevel,
+      productLinks: number(campaign.productLinks), coveredProducts: covered.length,
+      positiveProducts: positive.length, negativeProducts: negative.length,
+      currentBudget, targetBudget, executable: false
+    };
+  });
 }
 
 async function recommendations() {
@@ -124,18 +167,21 @@ async function recommendations() {
   }
   const rows = costs.rows.map((row) => recommend(row, pricingByOffer.get(row.offerId) || {}, campaignsBySku.get(String(row.sku || "")) || []));
   const inventory = summarizeCampaignInventory(campaignInventoryRows);
+  const campaignRecommendations = recommendCampaignBudgets(rows, inventory.campaigns);
   return {
     generatedAt: new Date().toISOString(), mode: "advisory", platformWrite: false, rows,
     campaignInventory: inventory.campaigns,
+    campaignRecommendations,
     externalTrackingRecords: inventory.externalTrackingRecords,
     summary: {
       products: rows.length,
       covered: rows.filter((row) => row.adRate14 !== null).length,
-      increase: rows.filter((row) => row.action === "increase_budget").length,
-      reduce: rows.filter((row) => ["reduce_budget", "reduce_or_pause"].includes(row.action)).length,
+      increase: rows.filter((row) => row.action === "increase_bid").length,
+      reduce: rows.filter((row) => ["reduce_bid", "pause_product"].includes(row.action)).length,
       waiting: rows.filter((row) => row.action === "wait_data").length,
       campaignSetup: rows.filter((row) => row.action === "review_campaign_setup").length,
       mappedCampaigns: rows.filter((row) => row.campaignId).length,
+      campaignBudgetChanges: campaignRecommendations.filter((row) => row.targetBudget !== null).length,
       executable: 0,
       ...inventory.summary
     }
@@ -144,8 +190,8 @@ async function recommendations() {
 
 async function refreshQueue() {
   const data = await recommendations();
-  const actionable = data.rows.filter((row) => !["hold", "wait_data"].includes(row.action));
-  const result = await operationQueue.replaceProposals("ozon_advertising", actionable.map((row) => ({
+  const actionable = data.rows.filter((row) => !["hold", "wait_data", "blocked"].includes(row.action));
+  const productProposals = actionable.map((row) => ({
     actionType: row.action,
     entityType: "product",
     entityId: row.offerId,
@@ -153,11 +199,24 @@ async function refreshQueue() {
     reason: row.reason,
     riskLevel: row.riskLevel,
     payload: { sku: row.sku, adRate14: row.adRate14, margin: row.margin, campaignId: row.campaignId,
-      currentBudget: row.currentBudget, currentBid: row.currentBid, targetBudget: row.targetBudget,
+      currentBudget: row.currentBudget, currentBid: row.currentBid, targetBid: row.targetBid, targetBudget: null,
       currentState: { budget: row.currentBudget, bid: row.currentBid } },
     requiresApproval: true
-  })));
+  }));
+  const campaignProposals = data.campaignRecommendations.filter((row) => row.targetBudget !== null).map((row) => ({
+    actionType: row.action,
+    entityType: "campaign",
+    entityId: row.campaignId,
+    title: row.title || row.campaignId,
+    reason: row.reason,
+    riskLevel: row.riskLevel,
+    payload: { campaignId: row.campaignId, currentBudget: row.currentBudget, targetBudget: row.targetBudget,
+      coveredProducts: row.coveredProducts, positiveProducts: row.positiveProducts, negativeProducts: row.negativeProducts,
+      currentState: { budget: row.currentBudget } },
+    requiresApproval: true
+  }));
+  const result = await operationQueue.replaceProposals("ozon_advertising", [...productProposals, ...campaignProposals]);
   return { ...data.summary, queued: result.created, platformWrite: false };
 }
 
-module.exports = { classifyCampaign, summarizeCampaignInventory, recommend, recommendations, refreshQueue };
+module.exports = { classifyCampaign, summarizeCampaignInventory, recommend, recommendCampaignBudgets, recommendations, refreshQueue };
