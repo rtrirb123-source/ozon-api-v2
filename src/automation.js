@@ -33,18 +33,18 @@ const JOB_DEFINITIONS = Object.freeze([
     key: "ozon_ad_campaign_read_sync",
     name: "Ozon 广告活动读取同步",
     description: "读取广告活动ID、类型、状态、预算、出价和商品关联，供策略预演使用。",
-    intervalMinutes: 1440,
-    scheduleMode: "daily_times",
-    dailyTimes: ["06:50"],
+    intervalMinutes: 180,
+    scheduleMode: "interval",
+    dailyTimes: [],
     platformWrite: false
   },
   {
     key: "ozon_advertising_strategy_refresh",
     name: "Ozon 广告策略刷新",
     description: "根据广告消耗、利润和库存生成预算调整建议与待审核队列。",
-    intervalMinutes: 1440,
-    scheduleMode: "daily_times",
-    dailyTimes: ["07:00"],
+    intervalMinutes: 180,
+    scheduleMode: "interval",
+    dailyTimes: [],
     platformWrite: false
   },
   {
@@ -175,6 +175,18 @@ async function ensureSchema() {
         updated_at = NOW()
     `, [job.key, job.name, job.description, job.intervalMinutes, job.scheduleMode, JSON.stringify(job.dailyTimes), job.platformWrite]);
   }
+  // Upgrade only the former built-in daily defaults. Custom schedules chosen
+  // in the UI are intentionally left untouched.
+  await query(`UPDATE automation_jobs
+    SET interval_minutes=180, schedule_mode='interval', daily_times='[]'::jsonb,
+        next_run_at=NOW(), updated_at=NOW()
+    WHERE job_key='ozon_ad_campaign_read_sync'
+      AND schedule_mode='daily_times' AND daily_times='["06:50"]'::jsonb`);
+  await query(`UPDATE automation_jobs
+    SET interval_minutes=180, schedule_mode='interval', daily_times='[]'::jsonb,
+        next_run_at=NOW(), updated_at=NOW()
+    WHERE job_key='ozon_advertising_strategy_refresh'
+      AND schedule_mode='daily_times' AND daily_times='["07:00"]'::jsonb`);
 }
 
 function registerHandlers(handlers) {

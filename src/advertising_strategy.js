@@ -12,7 +12,11 @@ function classifyCampaign(row = {}) {
   const running = state === "CAMPAIGN_STATE_RUNNING";
   const controllable = row.controllable === true;
   const externalTracking = ["REF_VK", "REF_BLOGGER"].includes(type);
-  const productCampaign = type === "SKU";
+  // Ozon uses ALL_SKU_PROMO for campaigns that still expose an explicit
+  // product list. Treating it as a non-product campaign drops every linked
+  // SKU from the operations centre even though the Performance API returns
+  // those links (for example campaign 23441397).
+  const productCampaign = ["SKU", "ALL_SKU_PROMO"].includes(type);
   return {
     campaignId: String(row.campaign_id || ""), title: row.title || "", type, state,
     running, controllable, productLinks,

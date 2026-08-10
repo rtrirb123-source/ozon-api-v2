@@ -199,6 +199,7 @@ async function monitorStatus() {
     const time = row.fetched_at ? new Date(row.fetched_at).getTime() : 0;
     return time > value ? time : value;
   }, 0);
+  const syncedSkus = new Set(rows.map((row) => String(row.sku)));
   return {
     configured: Boolean(config.seerfarCookie || config.seerfarAuthorization),
     source: "seerfar_package_monitor",
@@ -208,6 +209,12 @@ async function monitorStatus() {
     pending: Math.max(0, rows.length - ready),
     coverage: wanted.size ? Number((rows.length / wanted.size * 100).toFixed(1)) : 0,
     latestFetchedAt: latest ? new Date(latest).toISOString() : null,
+    missingSkus: [...wanted].filter((sku) => !syncedSkus.has(sku)).sort(),
+    collectionBlockedReason: !(config.seerfarCookie || config.seerfarAuthorization)
+      ? "服务器未配置 Seerfar 只读授权"
+      : wanted.size === 0
+        ? "尚未配置需要监控的竞品SKU"
+        : null,
     paidOpenApiUsed: false
   };
 }
