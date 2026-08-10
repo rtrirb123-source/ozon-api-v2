@@ -48,7 +48,8 @@ function summarizeCampaignInventory(rows = []) {
 
 function recommend(product, pricing = {}, campaigns = []) {
   const adRate = product.adCostRate14;
-  const margin = pricing.currentMargin;
+  const costProfitRatio = pricing.currentCostProfitRatio;
+  const profitZone = pricing.profitZone || "unknown";
   const stock = number(pricing.stock);
   const sales7 = number(pricing.sales7);
   let action = "hold";
@@ -58,17 +59,17 @@ function recommend(product, pricing = {}, campaigns = []) {
   if (adRate === null) {
     action = "wait_data";
     reason = "缺少近14天广告消耗数据，不执行预算或出价操作";
-  } else if (pricing.blocked || margin === null || margin < 0 || adRate >= 25) {
+  } else if (pricing.blocked || costProfitRatio === null || costProfitRatio < 0 || adRate >= 25) {
     action = "reduce_or_pause";
-    reason = pricing.blocked || margin === null ? "利润数据不完整，广告执行被安全拦截" : margin < 0 ? "当前利润为负，建议降低预算或暂停" : "广告费率达到25%以上，建议降低预算或暂停";
+    reason = pricing.blocked || costProfitRatio === null ? "成本利润率数据不完整，广告执行被拦截" : costProfitRatio < 0 ? "当前净利润为负，建议降低预算或暂停" : "广告费率达到25%以上，建议降低预算或暂停";
     riskLevel = "high";
-  } else if (margin >= 18 && adRate <= 10 && stock > Math.max(14, sales7 * 2)) {
+  } else if (profitZone === "safe" && adRate <= 10 && stock > Math.max(14, sales7 * 2)) {
     action = "increase_budget";
-    reason = "利润率、广告费率和库存均满足放量条件，可小幅增加预算";
+    reason = "成本利润率在80%以上安全区，广告费率和库存满足放量条件，可小幅增加预算";
     riskLevel = "medium";
-  } else if (adRate > 15 || margin < 10) {
+  } else if (adRate > 15 || profitZone === "danger") {
     action = "reduce_budget";
-    reason = adRate > 15 ? "广告费率偏高，建议小幅降低预算" : "利润空间偏低，建议收紧广告投入";
+    reason = adRate > 15 ? "广告费率偏高，建议小幅降低预算" : "成本利润率低于50%危险线，建议收紧广告投入";
     riskLevel = "medium";
   }
 
@@ -83,7 +84,7 @@ function recommend(product, pricing = {}, campaigns = []) {
 
   return {
     offerId: product.offerId, sku: product.sku, title: product.title, adRate14: adRate,
-    adSpend14Rub: product.adSpend14Rub, margin: margin ?? null, stock, sales7,
+    adSpend14Rub: product.adSpend14Rub, costProfitRatio: costProfitRatio ?? null, profitZone, stock, sales7,
     campaignId: activeCampaign?.campaign_id || "", campaignTitle: activeCampaign?.campaign_title || "",
     currentBudget, currentBid: activeCampaign?.bid == null ? null : number(activeCampaign.bid), targetBudget,
     action, reason, riskLevel, executable: false,

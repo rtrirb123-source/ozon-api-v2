@@ -5,7 +5,7 @@ const number = (value) => Number.isFinite(Number(value)) ? Number(value) : 0;
 const round = (value, digits = 1) => Number(number(value).toFixed(digits));
 
 function parseCompetitors(text = "") {
-  return String(text).split(/[；;\n]+/).map((segment) => {
+  return String(text).split(/(?=\b\d{8,12}\b)|[；;\n]+/).map((segment) => {
     const sku = segment.match(/\b(\d{8,12})\b/)?.[1];
     if (!sku) return null;
     const price = segment.match(/售价\s*[:：]?\s*(\d+(?:\.\d+)?)/)?.[1];
@@ -83,8 +83,8 @@ function recommend(row, pricing, monitorBySku = new Map()) {
   } else if (currentPrice < lowestPrice * 0.9 && pricing && !pricing.blocked) {
     action = "raise_opportunity"; reason = "我方价格显著低于有效竞品，存在回收利润的提价空间。"; priority = qualityScore >= 70 ? "high" : "medium";
   } else if (currentPrice > averagePrice * 1.08) {
-    action = currentPrice >= number(pricing?.minimumPrice) * 1.05 ? "review_price" : "optimize_content";
-    reason = action === "review_price" ? "我方价格高于竞品均价8%以上，可在利润底线之上测试价格。" : "价格已接近利润底线，不跟随降价，优先优化主图和卖点。";
+    action = pricing?.profitZone === "safe" ? "review_price" : "optimize_content";
+    reason = action === "review_price" ? "我方价格高于竞品均价8%以上，且成本利润率在安全区，可测试价格回撤。" : "成本利润率未进入安全区，不跟随降价，优先优化主图、卖点和成本。";
     priority = qualityScore >= 70 && action === "review_price" ? "high" : "medium";
   } else if (strongest && number(strongest.sales30) >= Math.max(100, sales7 * 4) && number(strongest.adShare) > 0) {
     action = "strengthen_ads"; reason = "头部竞品月销和广告投入明显，建议先检查流量并测试广告，而非直接降价。";
@@ -94,7 +94,8 @@ function recommend(row, pricing, monitorBySku = new Map()) {
 
   return {
     offerId: row.offer_id, sku: String(row.ozon_sku || ""), title: row.title || "", imageUrl: row.image_url || "",
-    currentPrice: round(currentPrice), currentProfitCny: pricing?.currentProfitCny ?? null, minimumPrice: pricing?.minimumPrice ?? null,
+    currentPrice: round(currentPrice), currentProfitCny: pricing?.currentProfitCny ?? null,
+    currentCostProfitRatio: pricing?.currentCostProfitRatio ?? null, profitZone: pricing?.profitZone || "unknown",
     priceSource: row.front_price_source || "missing", frontPriceUpdatedAt: row.front_price_updated_at || null,
     sales7, stock, competitors, competitorCount: competitors.length,
     averageCompetitorPrice: averagePrice === null ? null : round(averagePrice), lowestCompetitorPrice: lowestPrice,

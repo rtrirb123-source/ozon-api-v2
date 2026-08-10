@@ -368,9 +368,7 @@ async function route(req, res) {
       return sendJson(req, res, 200, {
         ok: true,
         data: await pricingStrategy.recommendations({
-          targetMargin: url.searchParams.has("target_margin") ? Number(url.searchParams.get("target_margin")) / 100 : undefined,
-          minimumMargin: url.searchParams.has("minimum_margin") ? Number(url.searchParams.get("minimum_margin")) / 100 : undefined,
-          minimumProfitCny: url.searchParams.has("minimum_profit") ? url.searchParams.get("minimum_profit") : undefined,
+          priceTestRate: url.searchParams.has("price_test_rate") ? Number(url.searchParams.get("price_test_rate")) / 100 : undefined,
           maxChangeRate: url.searchParams.has("max_change") ? Number(url.searchParams.get("max_change")) / 100 : undefined,
         }),
       });

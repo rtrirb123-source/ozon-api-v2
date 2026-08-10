@@ -6,31 +6,42 @@ const number = (value) => Number.isFinite(Number(value)) ? Number(value) : 0;
 
 function recommend(row, promotionRows = []) {
   const margin = row.currentMargin;
+  const currentCostProfitRatio = row.currentCostProfitRatio;
   const stock = number(row.stock);
   const sales7 = number(row.sales7);
   const participating = promotionRows.filter((item) => item.relation === "participating");
   const candidates = promotionRows.filter((item) => item.relation === "candidate");
   let action = "hold";
-  let reason = promotionRows.length ? "当前促销状态和安全底价均正常" : "尚未在Ozon促销商品清单中匹配到该商品";
+  let reason = promotionRows.length ? "当前促销状态与成本利润率正常" : "尚未在Ozon促销商品清单中匹配到该商品";
   let selected = participating.sort((a, b) => number(a.action_price) - number(b.action_price))[0] || null;
 
-  if (row.blocked || margin === null) {
+  const ratioAtPrice = (priceRub) => {
+    const input = row.financialInputs || {};
+    if (!number(priceRub) || !number(input.purchaseCostCny)) return null;
+    const profit = number(priceRub) * number(input.netRate) * number(input.rubToCny) - number(input.landedCny);
+    return profit / number(input.purchaseCostCny) * 100;
+  };
+
+  if (row.blocked || currentCostProfitRatio === null) {
     action = "blocked";
     reason = "成本或利润数据不完整，禁止生成促销动作";
   } else {
-    const unsafe = participating.find((item) => number(item.action_price) > 0 && number(item.action_price) < number(row.minimumPrice));
+    const unsafe = participating.find((item) => {
+      const ratio = ratioAtPrice(item.action_price);
+      return ratio !== null && ratio < 50;
+    });
     if (unsafe) {
       selected = unsafe;
       action = "review_exit";
-      reason = `当前活动价 ${number(unsafe.action_price)} ₽ 低于安全底价 ${number(row.minimumPrice)} ₽，建议审核退出`;
-    } else if (!participating.length && margin >= 22 && stock > Math.max(20, sales7 * 3)) {
+      reason = `当前活动价 ${number(unsafe.action_price)} ₽ 对应成本利润率低于50%危险线，建议审核退出`;
+    } else if (!participating.length && row.profitZone === "safe" && row.trend3 < -25 && stock > Math.max(20, sales7 * 3)) {
       const safe = candidates
-        .filter((item) => number(item.max_action_price) >= number(row.minimumPrice))
+        .filter((item) => ratioAtPrice(item.max_action_price) >= 80)
         .sort((a, b) => number(b.max_action_price) - number(a.max_action_price))[0];
       if (safe) {
         selected = safe;
         action = "review_join";
-        reason = `Ozon允许的活动价上限 ${number(safe.max_action_price)} ₽ 不低于安全底价，可审核参加`;
+        reason = `近3天销量下降且活动价成本利润率仍不低于80%，可审核参加以测试销量`;
       }
     }
   }
@@ -40,9 +51,12 @@ function recommend(row, promotionRows = []) {
     : 0;
   const discountPct = proposedActionPrice > 0 && number(row.currentPrice) > 0
     ? Math.max(0, Number(((1 - proposedActionPrice / number(row.currentPrice)) * 100).toFixed(1))) : 0;
+  const proposedCostProfitRatio = ratioAtPrice(proposedActionPrice || row.currentPrice);
+  const promotionProfitZone = proposedCostProfitRatio === null ? "unknown" : proposedCostProfitRatio < 50 ? "danger" : proposedCostProfitRatio < 80 ? "warning" : "safe";
   return {
     offerId: row.offerId, sku: row.sku, title: row.title, currentPrice: row.currentPrice,
-    minimumPrice: row.minimumPrice, margin, stock, sales7, action, discountPct, reason,
+    margin, currentCostProfitRatio, proposedCostProfitRatio, profitZone: promotionProfitZone,
+    stock, sales3: row.sales3, sales7, action, discountPct, reason,
     activityId: selected ? String(selected.action_id) : "",
     activityTitle: selected?.action_title || "",
     activityType: selected?.action_type || "",
@@ -88,7 +102,7 @@ async function refreshQueue() {
     riskLevel: "high",
     payload: {
       sku: row.sku, activityId: row.activityId, activityTitle: row.activityTitle,
-      actionPrice: row.actionPrice, maxActionPrice: row.maxActionPrice, minimumPrice: row.minimumPrice,
+      actionPrice: row.actionPrice, maxActionPrice: row.maxActionPrice,
       currentState: { relation: row.promotionState, actionPrice: row.actionPrice }
     },
     requiresApproval: true
