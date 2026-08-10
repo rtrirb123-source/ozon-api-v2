@@ -635,6 +635,21 @@ button:disabled {
   opacity: 0.72;
 }
 
+.shipment-history-day.shipment-match .history-note {
+  color: #15803d;
+  opacity: 1;
+}
+
+.shipment-history-day.shipment-mismatch .history-note {
+  color: #dc2626;
+  font-weight: 700;
+  opacity: 1;
+}
+
+.shipment-history-day.today .history-note {
+  color: inherit;
+}
+
 .history-loading,
 .history-empty {
   padding: 12px 0;

@@ -401,11 +401,23 @@ function renderHistoryCalendar(rows) {
     const day = date.getDate();
     const isToday = text(row.date).slice(0, 10) === todayChina();
     const isShipment = row.kind === "shipment";
-    const stockText = row.stock === null || row.stock === undefined ? "—" : fmt(row.stock);
+    const systemQuantity = num(row.system_quantity);
+    const manualQuantity = num(row.manual_quantity);
+    const manualRecorded = row.manual_recorded === true;
+    const shipmentDifference = systemQuantity - manualQuantity;
+    const stockText = isShipment
+      ? manualRecorded ? `实${fmt(manualQuantity)}` : "—"
+      : row.stock === null || row.stock === undefined ? "—" : fmt(row.stock);
     const note = isShipment
-      ? `系${fmt(row.system_quantity || 0)} 手${fmt(row.manual_quantity || 0)}`
+      ? manualRecorded
+        ? `系${fmt(systemQuantity)} ${shipmentDifference === 0 ? "一致" : shipmentDifference > 0 ? `多${fmt(shipmentDifference)}` : `少${fmt(Math.abs(shipmentDifference))}`}`
+        : `系${fmt(systemQuantity)} 待核`
       : row.source_note === "carried_forward" ? "沿用" : row.source_note === "daily_snapshot" ? "快照" : row.stock === null || row.stock === undefined ? "" : "变动";
-    return `<div class="history-day ${isToday ? "today" : ""} ${row.stock === null || row.stock === undefined ? "empty" : ""} ${isShipment ? "shipment-history-day" : ""}">
+    const shipmentStatus = !isShipment || !manualRecorded
+      ? ""
+      : shipmentDifference === 0 ? " shipment-match" : " shipment-mismatch";
+    const isEmpty = isShipment ? !manualRecorded : row.stock === null || row.stock === undefined;
+    return `<div class="history-day ${isToday ? "today" : ""} ${isEmpty ? "empty" : ""} ${isShipment ? "shipment-history-day" : ""}${shipmentStatus}">
       <div class="history-day-num">${esc(day)}</div>
       <div class="history-stock">${esc(stockText)}</div>
       <div class="history-note">${esc(note)}</div>
@@ -449,7 +461,7 @@ async function showStockHistory(cell) {
   if (!res.ok || !payload.ok) throw new Error(payload.error || (kind === "shipment" ? "每日发货历史加载失败" : "库存历史加载失败"));
   const rows = payload.data || [];
   popover.innerHTML = `<div class="history-title">${esc(warehouse?.label || "")}${esc(historyKindLabel(kind))}近30天</div>
-    ${kind === "shipment" ? `<div class="history-subtitle">上方数字为合计，下方为系统/手填</div>` : ""}
+    ${kind === "shipment" ? `<div class="history-subtitle">上方为手填实际发货，下方为系统读取及差异</div>` : ""}
     ${rows.length ? renderHistoryCalendar(rows) : `<div class="history-empty">近30天暂无记录</div>`}`;
   positionStockHistoryPopover(cell, popover);
 }

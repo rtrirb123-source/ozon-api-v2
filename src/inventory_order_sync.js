@@ -717,6 +717,8 @@ async function dailyShipmentHistory(offerId, warehouseKey = "linting", days = 30
       COALESCE(s.quantity, 0) AS system_quantity,
       COALESCE(m.quantity, 0) AS manual_quantity,
       COALESCE(s.quantity, 0) + COALESCE(m.quantity, 0) AS stock,
+      s.quantity IS NOT NULL AS system_recorded,
+      m.quantity IS NOT NULL AS manual_recorded,
       CASE
         WHEN s.quantity IS NOT NULL OR m.quantity IS NOT NULL THEN 'shipment_record'
         ELSE 'no_shipment'
