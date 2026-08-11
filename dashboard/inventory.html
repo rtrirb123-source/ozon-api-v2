@@ -72,12 +72,16 @@
             </tr>
             <tr>
               <th class="warehouse-col group-start">总数</th>
-              <th class="warehouse-col">每日发货数</th>
+              <th class="warehouse-col">
+                <span class="shipment-heading">每日发货数 <small>手填合计 <b id="manualShipmentTotal-linting">0</b></small></span>
+              </th>
               <th class="warehouse-col ozon-fbs-col">Ozon</th>
               <th class="warehouse-col">WB本土</th>
               <th class="warehouse-col">WB跨境</th>
               <th class="warehouse-col group-start shisheng-column">总数</th>
-              <th class="warehouse-col shisheng-column">每日发货数</th>
+              <th class="warehouse-col shisheng-column">
+                <span class="shipment-heading">每日发货数 <small>手填合计 <b id="manualShipmentTotal-shisheng">0</b></small></span>
+              </th>
               <th class="warehouse-col shisheng-column ozon-fbs-col">Ozon</th>
               <th class="warehouse-col shisheng-column">WB本土</th>
               <th class="warehouse-col shisheng-column">WB跨境</th>
@@ -106,6 +110,6 @@
     <div id="linkPopover" class="link-popover" hidden></div>
     <div id="stockHistoryPopover" class="stock-history-popover" hidden></div>
     <div id="toast" class="toast" hidden></div>
-    <script src="./inventory.js?v=20260810-shipment-history"></script>
+    <script src="./inventory.js?v=20260811-manual-shipment-total"></script>
   </body>
 </html>

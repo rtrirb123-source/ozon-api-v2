@@ -249,6 +249,17 @@ function renderStats(summary) {
     `<div class="stat"><span>${esc(label)}</span><strong>${esc(fmt(value))}</strong></div>`
   )).join("");
 }
+function manualDailyShipmentTotal(warehouseKey) {
+  return state.products.reduce((sum, item) => (
+    sum + num(item.manual_daily_shipments?.[warehouseKey])
+  ), 0);
+}
+function renderManualDailyShipmentTotals() {
+  for (const warehouse of WAREHOUSES) {
+    const node = $(`manualShipmentTotal-${warehouse.key}`);
+    if (node) node.textContent = fmt(manualDailyShipmentTotal(warehouse.key));
+  }
+}
 function renderRows() {
   const html = visibleProducts().map((item) => {
     const v = matrixValues(item);
@@ -289,7 +300,10 @@ function renderRows() {
   $("productBody").innerHTML = html || `<tr><td colspan="20" class="muted">暂无商品</td></tr>`;
   applyWarehouseVisibility();
 }
-function render() { renderRows(); }
+function render() {
+  renderRows();
+  renderManualDailyShipmentTotals();
+}
 function todayChina() {
   return new Intl.DateTimeFormat("en-CA", {
     timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit"
