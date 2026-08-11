@@ -350,7 +350,7 @@ function expectedProfit(item) {
 
   const commissionRub = priceRub * toNumber(item.commission_rate) / 100;
   const returnRub = priceRub * toNumber(item.return_rate) / 100;
-  const tailRub = priceRub * 0.14;
+  const tailRub = priceRub * toNumber(item.tail_delivery_rate) / 100;
   const taxRub = priceRub * 0.12;
   const acquiringRub = priceRub * 0.02;
   const remainingRub = priceRub - commissionRub - returnRub - tailRub - taxRub - acquiringRub;
@@ -444,6 +444,7 @@ function renderTable() {
       <th>发货成本</th>
       <th>重量</th>
       <th>运费系数</th>
+      <th>尾程派送系数</th>
       <th>退货率</th>
       <th>售价</th>
       <th>前台售价</th>
@@ -474,6 +475,7 @@ function renderTable() {
       <td>${renderInput(item, "shipping_cost")}</td>
       <td>${renderInput(item, "weight")}</td>
       <td>${renderInput(item, "freight_rate")}</td>
+      <td>${renderInput(item, "tail_delivery_rate")}</td>
       <td>${renderInput(item, "return_rate")}</td>
       <td>${renderInput(item, "price")}</td>
       <td title="${escapeHtml(item.front_price_source || "")}${item.front_price_updated_at ? ` · ${escapeHtml(new Date(item.front_price_updated_at).toLocaleString())}` : ""}">${item.front_price == null || item.front_price === "" ? "-" : `${escapeHtml(formatMoney(item.front_price))} ₽`}</td>
@@ -483,7 +485,7 @@ function renderTable() {
     </tr>
   `);
 
-  $("productBody").innerHTML = rows.join("") || `<tr><td colspan="17">暂无 WB 商品数据。WB API 可能仍在限流，稍后点击“同步WB”。</td></tr>`;
+  $("productBody").innerHTML = rows.join("") || `<tr><td colspan="18">暂无 WB 商品数据。WB API 可能仍在限流，稍后点击“同步WB”。</td></tr>`;
 }
 
 function renderRevenueTrend() {
