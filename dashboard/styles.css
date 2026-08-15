@@ -1459,23 +1459,6 @@ td.ozon-strategy-ratio {
   min-width: 72px;
 }
 
-.tracking-cell {
-  min-width: 76px;
-  text-align: center;
-}
-
-.daily-tracking-checkbox {
-  width: 18px;
-  height: 18px;
-  accent-color: var(--brand);
-  cursor: pointer;
-}
-
-.daily-tracking-checkbox:disabled {
-  cursor: wait;
-  opacity: 0.55;
-}
-
 .hide-product-btn {
   display: inline-flex;
   align-items: center;

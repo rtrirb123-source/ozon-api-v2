@@ -168,6 +168,7 @@ function recommendPrice(product, metrics, rates, settings, ruleInput = {}, actua
     title: product.title || "",
     imageUrl: product.image_url || "",
     operator: product.operator_name || "",
+    dailyTracking: product.daily_tracking === true,
     stock: round(stock), fboFbsStock: round(fboFbsStock), unallocatedStock: round(unallocatedStock),
     totalAvailableStock: round(stock), sales3: round(sales3), previous3: round(previous3), sales5: round(sales5),
     sales7: round(sales7), previous7: round(previous7),
