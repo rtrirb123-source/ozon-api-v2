@@ -29,7 +29,8 @@ const PUBLIC_FIELDS = [
   "front_price_updated_at",
   "competitor_compare",
   "operator_name",
-  "hidden"
+  "hidden",
+  "daily_tracking"
 ];
 
 const ALIASES = {
@@ -86,6 +87,8 @@ const ALIASES = {
   hidden: "hidden",
   is_hidden: "hidden",
   isHidden: "hidden",
+  dailyTracking: "daily_tracking",
+  daily_tracking: "daily_tracking",
   "\u5546\u54c1\u56fe\u7247": "image_url",
   "\u56fe\u7247": "image_url",
   "\u4e3b\u56fe": "image_url",
@@ -138,7 +141,7 @@ function normalizeInput(payload) {
   for (const [key, value] of Object.entries(payload || {})) {
     const normalizedKey = ALIASES[key] || key;
     if (!PUBLIC_FIELDS.includes(normalizedKey)) continue;
-    if (normalizedKey === "hidden") {
+    if (normalizedKey === "hidden" || normalizedKey === "daily_tracking") {
       out[normalizedKey] = value === true || value === "true" || value === 1 || value === "1";
       continue;
     }
@@ -188,6 +191,7 @@ function productSelect() {
     competitor_compare,
     operator_name,
     COALESCE(hidden, false) AS hidden,
+    COALESCE(daily_tracking, false) AS daily_tracking,
     created_at,
     updated_at
   `;
@@ -197,6 +201,18 @@ function productSelect() {
 async function ensureProductHiddenSchema() {
   if (process.env.MEMORY_STORE === "true") return;
   await query("ALTER TABLE products ADD COLUMN IF NOT EXISTS hidden BOOLEAN NOT NULL DEFAULT false");
+  await query("ALTER TABLE products ADD COLUMN IF NOT EXISTS daily_tracking BOOLEAN NOT NULL DEFAULT false");
+}
+
+async function listDailyTrackedProducts() {
+  if (process.env.MEMORY_STORE === "true") {
+    return Array.from(memoryProducts.values()).filter((item) => item.daily_tracking === true && !item.hidden);
+  }
+  await ensureProductHiddenSchema();
+  const result = await query(`SELECT ${productSelect()} FROM products
+    WHERE daily_tracking = true AND COALESCE(hidden, false) = false
+    ORDER BY updated_at DESC, id DESC`);
+  return result.rows;
 }
 
 async function ensureStrategyHistorySchema() {
@@ -466,6 +482,7 @@ async function dashboard({ date = "", showHidden = false } = {}) {
       acc.missingCompetitorCount += product.competitor_compare ? 0 : 1;
       acc.missingPriceCount += product.price === null ? 1 : 0;
       acc.missingCommissionCount += product.commission_rate === null ? 1 : 0;
+      acc.dailyTrackingCount += product.daily_tracking ? 1 : 0;
       return acc;
     },
     {
@@ -477,7 +494,8 @@ async function dashboard({ date = "", showHidden = false } = {}) {
       missingImageCount: 0,
       missingCompetitorCount: 0,
       missingPriceCount: 0,
-      missingCommissionCount: 0
+      missingCommissionCount: 0,
+      dailyTrackingCount: 0
     }
   );
 
@@ -593,6 +611,7 @@ module.exports = {
   getProduct,
   importProducts,
   listMetrics,
+  listDailyTrackedProducts,
   listProducts,
   listStrategyHistory,
   storeMetrics,

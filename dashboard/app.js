@@ -57,6 +57,7 @@ const editableFields = [
 ];
 
 const columns = [
+  { key: "daily_tracking", label: "每日跟踪", fixed: true },
   { key: "product", label: "商品", fixed: true },
   { key: "actions", label: "操作" },
   { key: "ozon_sku", label: "Ozon SKU" },
@@ -285,6 +286,7 @@ function renderStats() {
   const summary = state.summary;
   const items = [
     ["商品数", summary.productCount || 0],
+    ["每日跟踪", summary.dailyTrackingCount || 0],
     ["总销量", summary.totalSales || 0],
     ["总销售额", formatMoney(summary.totalRevenue || 0)],
     ["日期", summary.selectedDate || state.metricDate],
@@ -388,6 +390,12 @@ function renderActions(product) {
 }
 
 function renderCell(product, column) {
+  if (column.key === "daily_tracking") {
+    return `<td class="tracking-cell"><input class="daily-tracking-checkbox" type="checkbox"
+      data-tracking-offer="${escapeHtml(product.offer_id)}"
+      ${product.daily_tracking ? "checked" : ""}
+      aria-label="每日跟踪 ${escapeHtml(product.title || product.offer_id)}" /></td>`;
+  }
   if (column.key === "product") {
     return `
       <td class="product-cell">
@@ -687,6 +695,29 @@ async function setProductHidden(offerId, hidden) {
   showToast(hidden ? "商品已隐藏" : "商品已恢复");
 }
 
+async function setDailyTracking(offerId, enabled, checkbox) {
+  checkbox.disabled = true;
+  try {
+    const response = await fetch(`${API_BASE}/api/products/${encodeURIComponent(offerId)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ daily_tracking: enabled })
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || payload.ok === false) throw new Error(payload.error || `保存失败：${response.status}`);
+    const product = getProduct(offerId);
+    if (product) product.daily_tracking = enabled;
+    state.summary.dailyTrackingCount = state.products.filter((item) => item.daily_tracking).length;
+    renderStats();
+    showToast(enabled ? "已加入每日跟踪" : "已取消每日跟踪");
+  } catch (error) {
+    checkbox.checked = !enabled;
+    throw error;
+  } finally {
+    checkbox.disabled = false;
+  }
+}
+
 function initHiddenToggle() {
   const toggle = $("showHiddenInput");
   if (!toggle) return;
@@ -722,6 +753,11 @@ loadVisibleColumns();
 initHiddenToggle();
 document.addEventListener("input", handleEdit);
 document.addEventListener("change", (event) => {
+  const trackingOffer = event.target.dataset.trackingOffer;
+  if (trackingOffer) {
+    setDailyTracking(trackingOffer, event.target.checked, event.target).catch((error) => showToast(error.message));
+    return;
+  }
   const key = event.target.dataset.columnToggle;
   if (!key) return;
   if (event.target.checked) state.visibleColumns.add(key);

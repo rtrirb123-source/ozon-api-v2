@@ -859,9 +859,11 @@ async function fetchSalesAnalytics(days = 30) {
   return rows;
 }
 
-async function syncOzonMetrics({ days = 30 } = {}) {
+async function syncOzonMetrics({ days = 30, trackedOnly = false } = {}) {
   await syncOzonProducts();
-  const productRows = await products.listProducts({ limit: 1000 });
+  const productRows = trackedOnly
+    ? await products.listDailyTrackedProducts()
+    : await products.listProducts({ limit: 1000 });
   const lookup = buildProductLookup(productRows);
   const analyticsRows = await fetchSalesAnalytics(days);
   const grouped = new Map();
@@ -921,6 +923,7 @@ async function syncOzonMetrics({ days = 30 } = {}) {
   }
 
   return {
+    trackedOnly,
     productsMatched: byOffer.size,
     rowsFromOzon: analyticsRows.length,
     adRowsFromOzon: adSync.rows.length,

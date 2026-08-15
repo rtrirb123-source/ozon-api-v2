@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS products (
   ad_ratio NUMERIC,
   price NUMERIC,
   competitor_compare TEXT,
+  daily_tracking BOOLEAN NOT NULL DEFAULT FALSE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -56,6 +57,7 @@ ADD COLUMN IF NOT EXISTS yesterday_sales NUMERIC;
 ALTER TABLE products ADD COLUMN IF NOT EXISTS front_price NUMERIC;
 ALTER TABLE products ADD COLUMN IF NOT EXISTS front_price_source TEXT;
 ALTER TABLE products ADD COLUMN IF NOT EXISTS front_price_updated_at TIMESTAMPTZ;
+ALTER TABLE products ADD COLUMN IF NOT EXISTS daily_tracking BOOLEAN NOT NULL DEFAULT FALSE;
 
 CREATE INDEX IF NOT EXISTS products_updated_at_idx ON products (updated_at DESC);
 CREATE INDEX IF NOT EXISTS products_product_id_idx ON products (product_id);

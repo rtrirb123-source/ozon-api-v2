@@ -130,16 +130,28 @@ function buildMonitorRequest({ dateRange = "past_7_days", pageNumber = 1, pageSi
 }
 
 async function trackedSkuSet() {
-  const result = await query(`
-    SELECT competitor_compare FROM products
-    WHERE competitor_compare IS NOT NULL AND BTRIM(competitor_compare) <> ''
-  `);
-  return new Set(result.rows.flatMap((row) => extractTrackedSkus(row.competitor_compare)));
+  const trackedProducts = await products.listDailyTrackedProducts();
+  return new Set(trackedProducts.flatMap((row) => extractTrackedSkus(row.competitor_compare)));
 }
 
 async function syncMonitorCompetitors({ platform = "OZON", dateRange = config.seerfarMonitorDateRange, pageSize = 100 } = {}) {
   await ensureSchema();
   const wanted = await trackedSkuSet();
+  if (wanted.size === 0) {
+    return {
+      source: "seerfar_package_monitor",
+      platform,
+      dateRange,
+      monitoredTotal: 0,
+      trackedTotal: 0,
+      recordsRead: 0,
+      matched: 0,
+      updated: 0,
+      ready: 0,
+      pending: 0,
+      pages: 0
+    };
+  }
   let pageNumber = 1;
   let total = 0;
   let seen = 0;

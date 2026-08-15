@@ -30,6 +30,16 @@ const JOB_DEFINITIONS = Object.freeze([
     platformWrite: false
   },
   {
+    key: "ozon_selected_products_daily_tracking",
+    name: "Ozon 已勾选商品每日跟踪",
+    description: "每天只读更新已勾选商品的销量、库存、经营指标及其 Seerfar 竞品数据。",
+    intervalMinutes: 1440,
+    scheduleMode: "daily_times",
+    dailyTimes: ["08:30"],
+    defaultEnabled: true,
+    platformWrite: false
+  },
+  {
     key: "ozon_ad_campaign_read_sync",
     name: "Ozon 广告活动读取同步",
     description: "读取广告活动ID、类型、状态、预算、出价和商品关联，供策略预演使用。",
@@ -166,14 +176,14 @@ async function ensureSchema() {
   await query(`CREATE INDEX IF NOT EXISTS automation_runs_job_started_idx ON automation_runs (job_key, started_at DESC)`);
   for (const job of JOB_DEFINITIONS) {
     await query(`
-      INSERT INTO automation_jobs (job_key, name, description, interval_minutes, schedule_mode, daily_times, platform_write)
-      VALUES ($1, $2, $3, $4, $5, $6, $7)
+      INSERT INTO automation_jobs (job_key, name, description, enabled, interval_minutes, schedule_mode, daily_times, platform_write)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
       ON CONFLICT (job_key) DO UPDATE SET
         name = EXCLUDED.name,
         description = EXCLUDED.description,
         platform_write = EXCLUDED.platform_write,
         updated_at = NOW()
-    `, [job.key, job.name, job.description, job.intervalMinutes, job.scheduleMode, JSON.stringify(job.dailyTimes), job.platformWrite]);
+    `, [job.key, job.name, job.description, Boolean(job.defaultEnabled), job.intervalMinutes, job.scheduleMode, JSON.stringify(job.dailyTimes), job.platformWrite]);
   }
   // Upgrade only the former built-in daily defaults. Custom schedules chosen
   // in the UI are intentionally left untouched.

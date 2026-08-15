@@ -1451,6 +1451,10 @@ async function start() {
       ozon_products_read_sync: () => ozonSyncLock.withLock("automation-ozon-products", () => ozon.syncOzonProducts()),
       ozon_metrics_read_sync: () => ozonSyncLock.withLock("automation-ozon-metrics", () => ozon.syncOzonMetrics({ days: 7 })),
       seerfar_monitor_read_sync: () => ozonSyncLock.withLock("automation-seerfar-monitor", () => seerfar.syncMonitorCompetitors()),
+      ozon_selected_products_daily_tracking: () => ozonSyncLock.withLock("automation-selected-products", async () => ({
+        metrics: await ozon.syncOzonMetrics({ days: 7, trackedOnly: true }),
+        competitors: await seerfar.syncMonitorCompetitors()
+      })),
       ozon_ad_campaign_read_sync: () => ozonSyncLock.withLock("automation-ad-campaigns", () => ozon.syncPerformanceCampaignSnapshot()),
       ozon_advertising_strategy_refresh: () => advertisingStrategy.refreshQueue(),
       ozon_promotion_read_sync: () => ozonSyncLock.withLock("automation-ozon-promotions", () => ozonPromotionSync.sync()),
