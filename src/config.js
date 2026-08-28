@@ -29,6 +29,8 @@ const config = {
   ozonApiKey: process.env.OZON_API_KEY || "",
   ozonPerformanceClientId: process.env.OZON_PERFORMANCE_CLIENT_ID || "",
   ozonPerformanceClientSecret: process.env.OZON_PERFORMANCE_CLIENT_SECRET || "",
+  takealotApiKey: process.env.TAKEALOT_API_KEY || "",
+  takealotApiBaseUrl: process.env.TAKEALOT_API_BASE_URL || "https://marketplace-api.takealot.com/v1",
   wbSupplierId: process.env.WB_SUPPLIER_ID || "",
   wbApiKey: process.env.WB_API_KEY || "",
   allowedOrigins: (process.env.ALLOWED_ORIGINS || "*")

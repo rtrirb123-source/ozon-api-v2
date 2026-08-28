@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>南非 Takealot 经营看板</title>
+    <link rel="stylesheet" href="/auth-shared.css?v=20260827-takealot" />
+    <link rel="stylesheet" href="/takealot.css?v=20260827-1" />
+    <script src="/auth-guard.js?v=20260827-takealot"></script>
+  </head>
+  <body>
+    <main class="ta-shell">
+      <header class="ta-header">
+        <div>
+          <p class="eyebrow">SOUTH AFRICA · TAKEALOT</p>
+          <h1>南非经营看板</h1>
+          <p id="freshness">正在读取 Takealot Marketplace API…</p>
+        </div>
+        <div class="header-actions">
+          <label>状态
+            <select id="statusFilter">
+              <option value="all">全部商品</option>
+              <option value="buyable">可售</option>
+              <option value="risk">需处理</option>
+              <option value="low-stock">低库存</option>
+            </select>
+          </label>
+          <label>搜索
+            <input id="searchInput" type="search" placeholder="SKU / Offer ID / 标题" />
+          </label>
+          <button id="refreshButton" type="button">同步 API</button>
+        </div>
+      </header>
+
+      <section id="errorPanel" class="error-panel" hidden></section>
+      <section id="stats" class="stats-grid" aria-label="30天核心指标"></section>
+
+      <section class="panel trend-panel">
+        <div class="panel-head">
+          <div>
+            <p class="panel-kicker">近30天走势</p>
+            <h2>销量与销售额</h2>
+          </div>
+          <div class="legend"><span><i class="units"></i>销量</span><span><i class="revenue"></i>销售额</span></div>
+        </div>
+        <div id="trendChart" class="chart" aria-label="近30天销量与销售额趋势"></div>
+      </section>
+
+      <section class="insight-grid">
+        <article class="panel">
+          <div class="panel-head"><div><p class="panel-kicker">经营提醒</p><h2>需要先处理</h2></div></div>
+          <div id="alerts" class="alert-list"></div>
+        </article>
+        <article class="panel">
+          <div class="panel-head"><div><p class="panel-kicker">仓配视图</p><h2>JHB / CPT / DBN 库存</h2></div></div>
+          <div id="regionalStock" class="regional-stock"></div>
+        </article>
+      </section>
+
+      <section class="panel product-panel">
+        <div class="panel-head product-head">
+          <div><p class="panel-kicker">商品明细</p><h2>Offer 经营表</h2></div>
+          <p id="resultCount"></p>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>商品</th><th>状态</th><th>售价 / 基准价</th><th>7天 / 30天销量</th>
+                <th>30天销售额</th><th>现货 / 在途</th><th>库存覆盖</th><th>访问 / 转化</th>
+                <th>平台费用预估</th><th>退货</th><th>Listing</th><th>经营动作</th>
+              </tr>
+            </thead>
+            <tbody id="productBody"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <footer>
+        <p id="sourceNote">API 数据为实时运营口径。平台贡献毛利不等于净利润。</p>
+      </footer>
+    </main>
+    <script src="/takealot.js?v=20260827-1"></script>
+  </body>
+</html>

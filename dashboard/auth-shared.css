@@ -31,6 +31,16 @@ body > .portal-subnav,
   display: flex; align-items: center; gap: 6px; min-height: 52px; padding: 7px 24px;
   overflow-x: auto; background: #f5f8fc;
 }
+.portal-country-row {
+  display: flex; align-items: stretch; min-height: 66px; overflow-x: auto; background: #f5f8fc;
+}
+.portal-country-group { display: flex; align-items: center; flex: 0 0 auto; border-right: 1px solid #dce4ef; }
+.portal-country-group-sa { border-right: 0; }
+.portal-country-label {
+  align-self: stretch; display: flex; align-items: center; padding: 0 14px 0 24px;
+  color: #30435f; font-size: 13px; font-weight: 800; letter-spacing: .08em;
+}
+.portal-country-row .portal-platform-nav { min-height: 66px; padding-left: 0; overflow: visible; }
 .portal-platform-nav a,
 .portal-ozon-subnav a {
   flex: 0 0 auto; padding: 10px 16px; border-radius: 9px; color: #53647d;
@@ -48,4 +58,6 @@ body > .portal-subnav,
 @media (max-width: 720px) {
   .portal-section-title { padding: 0 16px; }
   .portal-platform-nav, .portal-ozon-subnav { padding-left: 12px; padding-right: 12px; }
+  .portal-country-label { padding-left: 16px; }
+  .portal-country-row .portal-platform-nav { padding-left: 0; }
 }

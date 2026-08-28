@@ -18,6 +18,7 @@ const seerfar = require("./seerfar");
 const inventory = require("./inventory");
 const inventoryOrderSync = require("./inventory_order_sync");
 const inventoryHistory = require("./inventory_history");
+const takealot = require("./takealot");
 
 const startedAt = new Date().toISOString();
 
@@ -246,6 +247,17 @@ async function route(req, res) {
     }
   }
 
+  if (url.pathname.startsWith("/api/takealot/")) {
+    const user = dashboardAuth.currentUser(req);
+    if (!user) return sendJson(req, res, 401, { error: "未登录" });
+    if (url.pathname === "/api/takealot/dashboard" && req.method === "GET") {
+      return sendJson(req, res, 200, {
+        ok: true,
+        data: await takealot.dashboard({ refresh: url.searchParams.get("refresh") === "1" }),
+      });
+    }
+  }
+
   if (req.method === "GET" && path === "/") {
     sendJson(req, res, 200, {
       ok: true,
@@ -266,7 +278,8 @@ async function route(req, res) {
         "GET /api/ozon/replenishment/fbo-clusters",
         "POST /api/seerfar/competitors/sync",
         "GET /api/products/:offer_id/competitor-insights",
-        "GET /api/ozon/finance/transactions"
+        "GET /api/ozon/finance/transactions",
+        "GET /api/takealot/dashboard"
       ]
     });
     return;
