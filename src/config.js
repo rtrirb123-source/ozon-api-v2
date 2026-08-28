@@ -31,6 +31,7 @@ const config = {
   ozonPerformanceClientSecret: process.env.OZON_PERFORMANCE_CLIENT_SECRET || "",
   takealotApiKey: process.env.TAKEALOT_API_KEY || "",
   takealotApiBaseUrl: process.env.TAKEALOT_API_BASE_URL || "https://marketplace-api.takealot.com/v1",
+  apiSocksProxy: process.env.API_SOCKS_PROXY || "",
   automationEnabled: (process.env.AUTOMATION_ENABLED || "false").toLowerCase() === "true",
   automationPollSeconds: Math.max(15, Number(process.env.AUTOMATION_POLL_SECONDS || 60)),
   automationAllowPlatformWrites: (process.env.AUTOMATION_ALLOW_PLATFORM_WRITES || "false").toLowerCase() === "true",

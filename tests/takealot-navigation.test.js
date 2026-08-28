@@ -29,6 +29,7 @@ test("Takealot page wires the protected dashboard API and required operating sec
   assert.match(js, /dashboardAuthReady/);
   assert.match(js, /\/api\/takealot\/dashboard/);
   assert.match(adapter, /"User-Agent": API_USER_AGENT/);
+  assert.match(adapter, /new SocksProxyAgent\(config\.apiSocksProxy\)/);
   assert.match(js, /佣金VAT/);
   assert.match(js, /履约VAT/);
 });
