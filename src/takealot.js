@@ -1,9 +1,12 @@
 const { config } = require("./config");
+const https = require("https");
+const { SocksProxyAgent } = require("socks-proxy-agent");
 
 const CACHE_TTL_MS = 10 * 60 * 1000;
 const VAT_RATE = 0.15;
 const API_USER_AGENT = "Mozilla/5.0 (compatible; AqicrossDashboard/1.0; +https://115.29.234.40/)";
 const cache = { payload: null, fetchedAt: 0, promise: null };
+const apiAgent = config.apiSocksProxy ? new SocksProxyAgent(config.apiSocksProxy) : undefined;
 
 function number(value) {
   const parsed = Number(value);
@@ -220,19 +223,38 @@ async function apiRequest(path, search = {}) {
   for (const [key, value] of Object.entries(search)) {
     for (const item of Array.isArray(value) ? value : [value]) url.searchParams.append(key, item);
   }
-  const response = await fetch(url, {
-    headers: {
-      "X-API-Key": config.takealotApiKey,
-      Accept: "application/json",
-      "User-Agent": API_USER_AGENT,
-    },
+  return new Promise((resolve, reject) => {
+    const request = https.request(url, {
+      method: "GET",
+      agent: apiAgent,
+      headers: {
+        "X-API-Key": config.takealotApiKey,
+        Accept: "application/json",
+        "User-Agent": API_USER_AGENT,
+      },
+    }, (response) => {
+      const chunks = [];
+      response.on("data", (chunk) => chunks.push(chunk));
+      response.on("end", () => {
+        if (response.statusCode < 200 || response.statusCode >= 300) {
+          const error = new Error(`Takealot API ${path} 请求失败：${response.statusCode}`);
+          error.statusCode = response.statusCode === 403 ? 502 : response.statusCode;
+          reject(error);
+          return;
+        }
+        try {
+          resolve(JSON.parse(Buffer.concat(chunks).toString("utf8")));
+        } catch (_error) {
+          const error = new Error(`Takealot API ${path} 返回了无法解析的数据。`);
+          error.statusCode = 502;
+          reject(error);
+        }
+      });
+    });
+    request.setTimeout(45_000, () => request.destroy(new Error(`Takealot API ${path} 请求超时。`)));
+    request.on("error", reject);
+    request.end();
   });
-  if (!response.ok) {
-    const error = new Error(`Takealot API ${path} 请求失败：${response.status}`);
-    error.statusCode = response.status === 403 ? 502 : response.status;
-    throw error;
-  }
-  return response.json();
 }
 
 async function listAll(path, params, limit = 100) {
