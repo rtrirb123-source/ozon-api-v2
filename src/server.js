@@ -18,6 +18,7 @@ const seerfar = require("./seerfar");
 const inventory = require("./inventory");
 const inventoryOrderSync = require("./inventory_order_sync");
 const inventoryHistory = require("./inventory_history");
+const takealot = require("./takealot");
 const automation = require("./automation");
 const ozonSyncLock = require("./ozon_sync_lock");
 const dailyProfit = require("./daily_profit");
@@ -549,6 +550,17 @@ async function route(req, res) {
       } catch (error) {
         return sendJson(req, res, 400, { error: error.message });
       }
+    }
+  }
+
+  if (url.pathname.startsWith("/api/takealot/")) {
+    const user = dashboardAuth.currentUser(req);
+    if (!user) return sendJson(req, res, 401, { error: "未登录" });
+    if (url.pathname === "/api/takealot/dashboard" && req.method === "GET") {
+      return sendJson(req, res, 200, {
+        ok: true,
+        data: await takealot.dashboard({ refresh: url.searchParams.get("refresh") === "1" }),
+      });
     }
   }
 
