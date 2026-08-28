@@ -61,6 +61,24 @@ GET  /products
 POST /products
 ```
 
+## Takealot South Africa Dashboard
+
+The authenticated `/takealot.html` page reads seller data through the server-side
+Takealot Marketplace API adapter. The API key is never sent to the browser.
+
+```text
+TAKEALOT_API_KEY=                 # required on the server
+TAKEALOT_API_BASE_URL=https://marketplace-api.takealot.com/v1
+```
+
+The dashboard combines offers, 60 days of sales, 30 days of returns, regional
+warehouse stock and offer charges. It exposes `GET /api/takealot/dashboard` and
+uses a 10-minute server cache; `?refresh=1` requests a fresh API read.
+
+"Platform contribution" is deliberately not labelled as net profit because the
+Takealot API does not provide purchase cost, first-leg freight, advertising cost
+or tax for each offer.
+
 ## Product Fields
 
 ```json
