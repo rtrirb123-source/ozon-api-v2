@@ -8,6 +8,9 @@ const read = (file) => fs.readFileSync(path.join(root, file), "utf8");
 
 test("unified navigation keeps Russia dashboards and adds South Africa on the right", () => {
   const nav = read("dashboard/auth-guard.js");
+  assert.doesNotMatch(nav, /跨境经营看板/);
+  assert.match(nav, /portal-country-group-ru/);
+  assert.match(nav, /portal-country-group-sa/);
   for (const href of ["/index.html", "/wb.html", "/wb-cross.html", "/inventory.html"]) {
     assert.match(nav, new RegExp(href.replaceAll("/", "\\/")));
   }

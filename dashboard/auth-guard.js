@@ -58,23 +58,28 @@
     const nav = document.createElement("div");
     nav.className = "unified-portal-nav";
     nav.innerHTML = `
-      <div class="portal-section-title"><span class="portal-status-dot"></span>跨境经营看板</div>
       <div class="portal-country-row">
-        <div class="portal-country-group">
-          <span class="portal-country-label">俄罗斯</span>
+        <section class="portal-country-group portal-country-group-ru" aria-labelledby="portal-country-russia">
+          <div class="portal-country-heading" id="portal-country-russia">
+            <strong>俄罗斯</strong>
+            <span>Ozon · Wildberries</span>
+          </div>
           <nav class="portal-platform-nav" aria-label="俄罗斯平台看板">
             <a class="${active("/index.html")}" href="/index.html">Ozon本土看板</a>
             <a class="${active("/wb.html")}" href="/wb.html">WB本土看板</a>
             <a class="${active("/wb-cross.html")}" href="/wb-cross.html">WB跨境店</a>
             <a class="${active("/inventory.html")}" href="/inventory.html">库存看板</a>
           </nav>
-        </div>
-        <div class="portal-country-group portal-country-group-sa">
-          <span class="portal-country-label">南非</span>
+        </section>
+        <section class="portal-country-group portal-country-group-sa" aria-labelledby="portal-country-south-africa">
+          <div class="portal-country-heading" id="portal-country-south-africa">
+            <strong>南非</strong>
+            <span>Takealot</span>
+          </div>
           <nav class="portal-platform-nav" aria-label="南非平台看板">
             <a class="${isTakealotSection ? " active" : ""}" href="/takealot.html">Takealot看板</a>
           </nav>
-        </div>
+        </section>
       </div>
       ${isOzonSection ? `
         <nav class="portal-ozon-subnav" aria-label="Ozon子看板">
