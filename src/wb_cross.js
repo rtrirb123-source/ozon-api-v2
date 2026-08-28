@@ -201,10 +201,15 @@ function isFbs(row) {
   return text.includes("продав") || text.includes("seller");
 }
 
-async function dashboard({ date = "" } = {}) {
+async function dashboard({ date = "", dateFrom = "", dateTo = "" } = {}) {
   await ensureSchema();
   await refreshYesterdaySalesFromMetrics();
-  const selectedDate = normalizeMetricDateInput(date) || await defaultMetricDate();
+  const fallbackDate = normalizeMetricDateInput(date) || await defaultMetricDate();
+  const selectedDateFrom = normalizeMetricDateInput(dateFrom) || fallbackDate;
+  const selectedDateTo = normalizeMetricDateInput(dateTo) || selectedDateFrom;
+  if (selectedDateFrom > selectedDateTo) {
+    const error = new Error("date_from must not be after date_to"); error.statusCode = 400; throw error;
+  }
 
   const productsResult = await query(`
     SELECT *
@@ -214,14 +219,23 @@ async function dashboard({ date = "" } = {}) {
   const products = productsResult.rows;
 
   const metrics = await query(
-    `WITH metric_products AS (
-       SELECT nm_id
+    `WITH sales AS (
+       SELECT nm_id, SUM(sales_units) AS sales_units, SUM(revenue) AS revenue
        FROM wb_cross_daily_metrics
-       WHERE metric_date = $1::date
+       WHERE metric_date BETWEEN $1::date AND $2::date
+       GROUP BY nm_id
+     ), ads AS (
+       SELECT nm_id, SUM(ad_spend) AS ad_spend, SUM(views) AS views, SUM(clicks) AS clicks,
+              SUM(orders) AS orders, SUM(ad_revenue) AS ad_revenue, MAX(currency) AS currency
+       FROM wb_cross_ad_metrics
+       WHERE metric_date BETWEEN $1::date AND $2::date
+       GROUP BY nm_id
+     ), metric_products AS (
+       SELECT nm_id
+       FROM sales
        UNION
        SELECT nm_id
-       FROM wb_cross_ad_metrics
-       WHERE metric_date = $1::date
+       FROM ads
      )
      SELECT
        x.nm_id,
@@ -234,11 +248,9 @@ async function dashboard({ date = "" } = {}) {
        COALESCE(a.ad_revenue, 0) AS ad_revenue,
        COALESCE(a.currency, 'CNY') AS ad_currency
      FROM metric_products x
-     LEFT JOIN wb_cross_daily_metrics m
-       ON m.nm_id = x.nm_id AND m.metric_date = $1::date
-     LEFT JOIN wb_cross_ad_metrics a
-       ON a.nm_id = x.nm_id AND a.metric_date = $1::date`,
-    [selectedDate]
+     LEFT JOIN sales m ON m.nm_id = x.nm_id
+     LEFT JOIN ads a ON a.nm_id = x.nm_id`,
+    [selectedDateFrom, selectedDateTo]
   );
   const byNm = new Map(metrics.rows.map(row => [String(row.nm_id), row]));
   for (const product of products) {
@@ -251,7 +263,8 @@ async function dashboard({ date = "" } = {}) {
     product.selected_ad_orders = Number(metric?.ad_orders || 0);
     product.selected_ad_revenue = Number(metric?.ad_revenue || 0);
     product.selected_ad_currency = metric?.ad_currency || "CNY";
-    product.metric_date = selectedDate;
+    product.ad_ratio = product.selected_revenue > 0 ? Number((product.selected_ad_spend / product.selected_revenue * 100).toFixed(2)) : null;
+    product.metric_date = selectedDateTo;
     product.yesterday_sales = product.selected_sales;
   }
 
@@ -264,11 +277,13 @@ async function dashboard({ date = "" } = {}) {
       totalRevenue: products.reduce((s, x) => s + Number(x.selected_revenue || 0), 0),
       totalAdSpend: products.reduce((s, x) => s + Number(x.selected_ad_spend || 0), 0),
       totalAdOrders: products.reduce((s, x) => s + Number(x.selected_ad_orders || 0), 0),
-      selectedDate
+      selectedDate: selectedDateTo,
+      selectedDateFrom,
+      selectedDateTo
     },
     products,
     fetchedAt: new Date().toISOString(),
-    source: { provider: "wildberries-cross", selectedDate }
+    source: { provider: "wildberries-cross", selectedDateFrom, selectedDateTo }
   };
 }
 async function storeMetrics({ days = 30 } = {}) {
@@ -456,15 +471,17 @@ async function syncAds({ from = "", to = "" } = {}) {
 async function listMetrics(nmId, options = {}) {
   await ensureSchema();
 
-  const days = Math.max(1, Number(options.days || 7));
+  const days = Math.min(366, Math.max(1, Number(options.days || 7)));
   const id = String(nmId || "").trim();
   if (!id) return [];
 
-  const today = new Date();
+  const today = new Date(`${normalizeMetricDateInput(options.dateTo) || new Date().toISOString().slice(0, 10)}T00:00:00Z`);
   today.setUTCHours(0, 0, 0, 0);
   const from = new Date(today);
   from.setUTCDate(today.getUTCDate() - (days - 1));
-  const fromDate = from.toISOString().slice(0, 10);
+  const fromDate = normalizeMetricDateInput(options.dateFrom) || from.toISOString().slice(0, 10);
+  const rangeStart = new Date(`${fromDate}T00:00:00Z`);
+  const rangeDays = Math.min(366, Math.floor((today - new Date(`${fromDate}T00:00:00Z`)) / 86400000) + 1);
 
   const result = await query(
     `SELECT metric_date::text AS metric_date,
@@ -488,9 +505,9 @@ async function listMetrics(nmId, options = {}) {
   ]));
 
   const rows = [];
-  for (let i = 0; i < days; i++) {
-    const d = new Date(from);
-    d.setUTCDate(from.getUTCDate() + i);
+  for (let i = 0; i < rangeDays; i++) {
+    const d = new Date(rangeStart);
+    d.setUTCDate(rangeStart.getUTCDate() + i);
     const key = d.toISOString().slice(0, 10);
     rows.push(byDate.get(key) || { metric_date: key, sales_units: 0, revenue: 0 });
   }

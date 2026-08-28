@@ -22,12 +22,15 @@
       </div>
       <div class="actions">
         <input id="searchInput" type="search" placeholder="搜索 nm_id / 商品 / 类目" />
-        <input id="metricDateInput" type="date" title="选择销售日期" />
+        <select id="datePreset"><option value="day" selected>昨日</option><option value="7">近7天</option><option value="30">近30天</option><option value="90">近90天</option><option value="month">本月</option><option value="prevMonth">上月</option><option value="year">今年</option><option value="custom">自定义</option></select>
+        <input id="metricDateFromInput" type="date" title="开始日期" /><span>至</span>
+        <input id="metricDateInput" type="date" title="结束日期" />
         <select id="salesSort">
-          <option value="desc">当日销量 高到低</option>
-          <option value="asc">当日销量 低到高</option>
+          <option value="desc">区间销量 高到低</option>
+          <option value="asc">区间销量 低到高</option>
           <option value="none">默认排序</option>
         </select>
+        <label class="hidden-toggle"><input id="showHiddenInput" type="checkbox" />显示隐藏商品</label>
         <button id="refreshBtn" type="button">刷新</button>
         <button id="syncWbBtn" type="button" class="secondary">同步WB</button>
         <button id="mappingBtn" type="button" class="secondary">&#26144;&#23556;&#34920;</button>
@@ -211,6 +214,6 @@
     </form>
   </dialog>
 
-  <script src="./wb.js?v=20260811-tail-delivery-rate"></script>
+  <script src="./wb.js?v=20260816-split-default-ranges"></script>
 </body>
 </html>

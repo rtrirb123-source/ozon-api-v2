@@ -10,6 +10,13 @@ const MARKETPLACE_HOST = "marketplace-api.wildberries.ru";
 const statsLimiter = createWbStatsLimiter();
 const ADVERT_HOST = "advert-api.wildberries.ru";
 const adSummaryCache = new Map();
+let wbHiddenSchemaReady = false;
+
+async function ensureWbHiddenSchema() {
+  if (wbHiddenSchemaReady) return;
+  await query("ALTER TABLE wb_products ADD COLUMN IF NOT EXISTS hidden BOOLEAN NOT NULL DEFAULT false");
+  wbHiddenSchemaReady = true;
+}
 
 function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
 function formatDate(date) { return date.toISOString().slice(0, 10); }
@@ -450,28 +457,38 @@ function productSelect() {
   return `id, nm_id, vendor_code, title, brand, subject_name, image_url, stock, fbs_stock, fbw_stock,
     yesterday_sales, commission_rate, purchase_cost, shipping_cost, weight, freight_rate, tail_delivery_rate, return_rate, price,
     front_price, front_price_source, front_price_updated_at, ad_ratio, competitor_compare,
-    strategy, created_at, updated_at`;
+    strategy, COALESCE(hidden, false) AS hidden, created_at, updated_at`;
 }
 
-async function dashboard({ date = "" } = {}) {
+async function dashboard({ date = "", dateFrom = "", dateTo = "", showHidden = false } = {}) {
+  await ensureWbHiddenSchema();
   await refreshYesterdaySalesFromMetrics();
   const requestedDate = normalizeMetricDateInput(date) || await defaultMetricDate();
-  const resolvedDate = await resolveMetricDate(requestedDate);
-  const selectedDate = resolvedDate.metric_date || requestedDate;
-  const result = await query(`SELECT ${productSelect()} FROM wb_products ORDER BY yesterday_sales DESC NULLS LAST, updated_at DESC`);
+  const selectedDateFrom = normalizeMetricDateInput(dateFrom) || requestedDate;
+  const selectedDateTo = normalizeMetricDateInput(dateTo) || selectedDateFrom;
+  if (selectedDateFrom > selectedDateTo) {
+    const error = new Error("date_from must not be after date_to"); error.statusCode = 400; throw error;
+  }
+  const singleDay = selectedDateFrom === selectedDateTo;
+  const resolvedDate = singleDay ? await resolveMetricDate(selectedDateFrom) : null;
+  const rangeFrom = resolvedDate?.metric_date || selectedDateFrom;
+  const rangeTo = resolvedDate?.metric_date || selectedDateTo;
+  const includeHidden = showHidden === true || showHidden === "true" || showHidden === "1" || showHidden === 1;
+  const result = await query(`SELECT ${productSelect()} FROM wb_products ${includeHidden ? "" : "WHERE COALESCE(hidden, false) = false"} ORDER BY yesterday_sales DESC NULLS LAST, updated_at DESC`);
   const products = result.rows;
   const metrics = await query(
-    `SELECT nm_id, COALESCE(sales_units, 0) AS sales_units, COALESCE(revenue, 0) AS revenue
+    `SELECT nm_id, COALESCE(SUM(sales_units), 0) AS sales_units, COALESCE(SUM(revenue), 0) AS revenue
      FROM wb_daily_metrics
-     WHERE metric_date = $1::date`,
-    [selectedDate]
+     WHERE metric_date BETWEEN $1::date AND $2::date
+     GROUP BY nm_id`,
+    [rangeFrom, rangeTo]
   );
   const byNm = new Map(metrics.rows.map(row => [String(row.nm_id), row]));
   for (const product of products) {
     const metric = byNm.get(String(product.nm_id));
     product.selected_sales = Number(metric?.sales_units || 0);
     product.selected_revenue = Number(metric?.revenue || 0);
-    product.metric_date = selectedDate;
+    product.metric_date = rangeTo;
     product.yesterday_sales = product.selected_sales;
   }
   return {
@@ -481,18 +498,21 @@ async function dashboard({ date = "" } = {}) {
       totalYesterdaySales: products.reduce((s, x) => s + Number(x.yesterday_sales || 0), 0),
       totalSales: products.reduce((s, x) => s + Number(x.selected_sales || 0), 0),
       totalRevenue: products.reduce((s, x) => s + Number(x.selected_revenue || 0), 0),
-      selectedDate,
+      selectedDate: rangeTo,
+      selectedDateFrom: rangeFrom,
+      selectedDateTo: rangeTo,
       requestedDate,
-      dateFallback: selectedDate !== requestedDate
+      dateFallback: singleDay && rangeTo !== requestedDate
     },
     products,
     fetchedAt: new Date().toISOString(),
-    source: { provider: "wildberries", selectedDate, requestedDate, dateFallback: selectedDate !== requestedDate }
+    source: { provider: "wildberries", selectedDateFrom: rangeFrom, selectedDateTo: rangeTo, requestedDate, dateFallback: singleDay && rangeTo !== requestedDate }
   };
 }
 
 async function updateProduct(nmId, payload) {
-  const allowed = ["commission_rate", "purchase_cost", "shipping_cost", "weight", "freight_rate", "tail_delivery_rate", "return_rate", "price", "front_price", "front_price_source", "front_price_updated_at", "ad_ratio", "competitor_compare", "strategy", "image_url"];
+  await ensureWbHiddenSchema();
+  const allowed = ["commission_rate", "purchase_cost", "shipping_cost", "weight", "freight_rate", "tail_delivery_rate", "return_rate", "price", "front_price", "front_price_source", "front_price_updated_at", "ad_ratio", "competitor_compare", "strategy", "image_url", "hidden"];
   const fields = Object.keys(payload || {}).filter(f => allowed.includes(f));
   if (!fields.length) return null;
   const params = fields.map(f => payload[f]);
@@ -520,21 +540,26 @@ async function storeMetrics({ days = 30 } = {}) {
     [safeDays]
   );
   return result.rows;
-}async function listMetrics(nmId, { days = 30 } = {}) {
-  const safeDays = Math.min(Math.max(Number(days) || 30, 1), 90);
+}async function listMetrics(nmId, { days = 30, dateFrom = "", dateTo = "" } = {}) {
+  const safeDays = Math.min(Math.max(Number(days) || 30, 1), 366);
+  const rangeTo = normalizeMetricDateInput(dateTo) || moscowDateOffset(0);
+  const fallbackFrom = new Date(`${rangeTo}T00:00:00Z`);
+  fallbackFrom.setUTCDate(fallbackFrom.getUTCDate() - safeDays + 1);
+  const rangeFrom = normalizeMetricDateInput(dateFrom) || fallbackFrom.toISOString().slice(0, 10);
   const r = await query(
     `SELECT metric_date::text AS metric_date, sales_units, revenue, updated_at
      FROM wb_daily_metrics
-     WHERE nm_id = $1 AND metric_date >= CURRENT_DATE - ($2::INT - 1)
+     WHERE nm_id = $1 AND metric_date BETWEEN $2::date AND $3::date
      ORDER BY metric_date ASC`,
-    [nmId, safeDays]
+    [nmId, rangeFrom, rangeTo]
   );
 
   const byDate = new Map(r.rows.map(row => [String(row.metric_date).slice(0, 10), row]));
   const out = [];
-  for (let offset = safeDays - 1; offset >= 0; offset -= 1) {
-    const date = new Date();
-    date.setUTCDate(date.getUTCDate() - offset);
+  const totalDays = Math.min(366, Math.floor((new Date(`${rangeTo}T00:00:00Z`) - new Date(`${rangeFrom}T00:00:00Z`)) / 86400000) + 1);
+  for (let offset = 0; offset < totalDays; offset += 1) {
+    const date = new Date(`${rangeFrom}T00:00:00Z`);
+    date.setUTCDate(date.getUTCDate() + offset);
     const key = date.toISOString().slice(0, 10);
     const existing = byDate.get(key);
     out.push(existing || { metric_date: key, sales_units: 0, revenue: 0 });

@@ -118,6 +118,7 @@ CREATE TABLE IF NOT EXISTS wb_products (
   tail_delivery_rate NUMERIC DEFAULT 14,
   competitor_compare TEXT,
   strategy TEXT,
+  hidden BOOLEAN NOT NULL DEFAULT false,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -174,7 +175,8 @@ ADD COLUMN IF NOT EXISTS commission_rate NUMERIC,
 ADD COLUMN IF NOT EXISTS return_rate NUMERIC,
 ADD COLUMN IF NOT EXISTS front_price NUMERIC,
 ADD COLUMN IF NOT EXISTS front_price_source TEXT,
-ADD COLUMN IF NOT EXISTS front_price_updated_at TIMESTAMPTZ;
+ADD COLUMN IF NOT EXISTS front_price_updated_at TIMESTAMPTZ,
+ADD COLUMN IF NOT EXISTS hidden BOOLEAN NOT NULL DEFAULT false;
 
 CREATE TABLE IF NOT EXISTS wb_product_mappings (
   id BIGSERIAL PRIMARY KEY,

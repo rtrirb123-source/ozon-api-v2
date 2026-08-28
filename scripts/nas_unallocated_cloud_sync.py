@@ -74,7 +74,10 @@ def parse_workbook(path, source_file):
             header = find_header(rows)
             if not header:
                 continue
-            box_mark = ""
+            # Some workbooks use the worksheet title (for example, AQ-0714)
+            # as the box mark instead of repeating a "箱唛号" field in the sheet.
+            # Keep the in-sheet value authoritative when it is present.
+            box_mark = clean(sheet.title)
             for row_index, row in enumerate(rows):
                 values = list(row)
                 mark_index = next((i for i, value in enumerate(values) if clean(value) == "箱唛号"), -1)

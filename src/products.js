@@ -446,26 +446,42 @@ async function deleteProduct(offerId) {
   return Boolean(result.rows[0]);
 }
 
-async function dashboard({ date = "", showHidden = false } = {}) {
-  const selectedDate = normalizeMetricDateInput(date) || await defaultMetricDate();
+async function dashboard({ date = "", dateFrom = "", dateTo = "", showHidden = false } = {}) {
+  const fallbackDate = normalizeMetricDateInput(date) || await defaultMetricDate();
+  const selectedDateFrom = normalizeMetricDateInput(dateFrom) || fallbackDate;
+  const selectedDateTo = normalizeMetricDateInput(dateTo) || selectedDateFrom;
+  if (selectedDateFrom > selectedDateTo) {
+    const error = new Error("date_from must not be after date_to");
+    error.statusCode = 400;
+    throw error;
+  }
   const products = await listProducts({ limit: 1000, showHidden });
 
   if (process.env.MEMORY_STORE !== "true" && products.length) {
     const metrics = await query(
       `SELECT
          offer_id,
-         COALESCE(sales_units, 0) AS sales_units,
-         COALESCE(revenue, 0) AS revenue
+         COALESCE(SUM(sales_units), 0) AS sales_units,
+         COALESCE(SUM(revenue), 0) AS revenue,
+         COALESCE(SUM(ad_spend), 0) AS ad_spend
        FROM product_daily_metrics
-       WHERE metric_date = $1::date`,
-      [selectedDate]
+       WHERE metric_date BETWEEN $1::date AND $2::date
+       GROUP BY offer_id`,
+      [selectedDateFrom, selectedDateTo]
     );
     const byOffer = new Map(metrics.rows.map((row) => [row.offer_id, row]));
     for (const product of products) {
       const metric = byOffer.get(product.offer_id);
       product.selected_sales = Number(metric?.sales_units || 0);
       product.selected_revenue = Number(metric?.revenue || 0);
-      product.metric_date = selectedDate;
+      product.selected_ad_spend = Number(metric?.ad_spend || 0);
+      // ad_ratio is an editable planning assumption used by the sales dashboard.
+      // Keep actual Ozon advertising performance separate so metric syncs never
+      // overwrite the user's forecast input or expected-profit calculation.
+      product.actual_ad_ratio = product.selected_revenue > 0
+        ? Number((product.selected_ad_spend / product.selected_revenue * 100).toFixed(2))
+        : null;
+      product.metric_date = selectedDateTo;
       product.yesterday_sales = product.selected_sales;
     }
   }
@@ -490,7 +506,9 @@ async function dashboard({ date = "", showHidden = false } = {}) {
       totalPrice: 0,
       totalSales: 0,
       totalRevenue: 0,
-      selectedDate,
+      selectedDate: selectedDateFrom === selectedDateTo ? selectedDateFrom : selectedDateTo,
+      selectedDateFrom,
+      selectedDateTo,
       missingImageCount: 0,
       missingCompetitorCount: 0,
       missingPriceCount: 0,
@@ -503,7 +521,7 @@ async function dashboard({ date = "", showHidden = false } = {}) {
     summary,
     products,
     fetchedAt: new Date().toISOString(),
-    source: { provider: "postgres", selectedDate }
+    source: { provider: "postgres", selectedDateFrom, selectedDateTo }
   };
 }
 
@@ -532,8 +550,10 @@ async function storeMetrics({ days = 30 } = {}) {
   return result.rows;
 }
 
-async function listMetrics(offerId, { days = 30 } = {}) {
-  const safeDays = Math.min(Math.max(Number(days) || 30, 1), 120);
+async function listMetrics(offerId, { days = 30, dateFrom = "", dateTo = "" } = {}) {
+  const safeDays = Math.min(Math.max(Number(days) || 30, 1), 366);
+  const safeFrom = normalizeMetricDateInput(dateFrom);
+  const safeTo = normalizeMetricDateInput(dateTo);
   if (process.env.MEMORY_STORE === "true") {
     return [];
   }
@@ -548,9 +568,10 @@ async function listMetrics(offerId, { days = 30 } = {}) {
        updated_at
      FROM product_daily_metrics
      WHERE offer_id = $1
-       AND metric_date >= CURRENT_DATE - ($2::int - 1)
+       AND metric_date >= COALESCE($2::date, CURRENT_DATE - ($4::int - 1))
+       AND metric_date <= COALESCE($3::date, CURRENT_DATE)
      ORDER BY metric_date ASC`,
-    [offerId, safeDays]
+    [offerId, safeFrom, safeTo, safeDays]
   );
   return result.rows;
 }

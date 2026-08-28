@@ -1,4 +1,5 @@
 const API_BASE = "";
+const showHiddenKey = "wb-dashboard-show-hidden";
 const state = {
   products: [],
   summary: {},
@@ -17,12 +18,15 @@ const state = {
   salesSort: "desc",
   activeView: "products",
   metricDate: defaultMetricDate(),
+  metricDateFrom: defaultMetricDate(),
+  trendFollowsSelection: false,
   timers: new Map(),
   statuses: new Map(),
   rubToCny: 9.07 / 100,
   taxRate: 0.12,
   collectionRate: 0.03,
-  exchangeRateUpdatedAt: ""
+  exchangeRateUpdatedAt: "",
+  showHidden: localStorage.getItem(showHiddenKey) === "1"
 };
 
 
@@ -36,6 +40,12 @@ function defaultMetricDate() {
   return date.toISOString().slice(0, 10);
 }
 
+function defaultMetricDateFrom() {
+  const date = new Date();
+  date.setDate(date.getDate() - 30);
+  return date.toISOString().slice(0, 10);
+}
+
 function formatMoney(value) {
   return new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 0 }).format(toNumber(value)) + " ₽";
 }
@@ -46,8 +56,29 @@ function formatCny(value) {
 }
 
 function dashboardUrl() {
-  const date = formatDateKey(state.metricDate || defaultMetricDate());
-  return `${API_BASE}/api/wb/dashboard?date=${encodeURIComponent(date)}`;
+  const params = new URLSearchParams({ date_from: state.metricDateFrom, date_to: state.metricDate });
+  if (state.showHidden) params.set("show_hidden", "1");
+  return `${API_BASE}/api/wb/dashboard?${params}`;
+}
+
+function syncDateControls() {
+  if ($("metricDateFromInput")) $("metricDateFromInput").value = state.metricDateFrom;
+  if ($("metricDateInput")) $("metricDateInput").value = state.metricDate;
+}
+
+function trendDateRange() {
+  return state.trendFollowsSelection
+    ? { from: state.metricDateFrom, to: state.metricDate }
+    : { from: defaultMetricDateFrom(), to: defaultMetricDate() };
+}
+
+function applyDatePreset(value) {
+  const end = new Date(); end.setDate(end.getDate() - 1); let start = new Date(end);
+  if (/^\d+$/.test(value)) start.setDate(end.getDate() - Number(value) + 1);
+  else if (value === "month") start = new Date(end.getFullYear(), end.getMonth(), 1);
+  else if (value === "prevMonth") { start = new Date(end.getFullYear(), end.getMonth() - 1, 1); end.setTime(new Date(end.getFullYear(), end.getMonth(), 0).getTime()); }
+  else if (value === "year") start = new Date(end.getFullYear(), 0, 1);
+  state.metricDateFrom = start.toISOString().slice(0, 10); state.metricDate = end.toISOString().slice(0, 10); syncDateControls();
 }
 
 async function loadStoreMetrics() {
@@ -292,7 +323,9 @@ async function loadDashboard() {
   state.products = payload.data.products || [];
   state.summary = payload.data.summary || {};
   state.metricDate = formatDateKey(payload.data.summary?.selectedDate) || state.metricDate;
-  if ($("metricDateInput")) $("metricDateInput").value = state.metricDate;
+  state.metricDateFrom = formatDateKey(payload.data.summary?.selectedDateFrom) || state.metricDateFrom;
+  state.metricDate = formatDateKey(payload.data.summary?.selectedDateTo) || state.metricDate;
+  syncDateControls();
   loadStoreMetrics().catch(error => showToast(error.message));
   render();
 
@@ -306,7 +339,7 @@ function renderStats() {
     ["WB商品数", s.productCount || 0],
     ["总销量", s.totalSales || s.totalYesterdaySales || 0],
     ["总销售额", formatMoney(s.totalRevenue || 0)],
-    ["当前日期", s.selectedDate || state.metricDate || "-"],
+    ["日期范围", `${s.selectedDateFrom || state.metricDateFrom} 至 ${s.selectedDateTo || state.metricDate}`],
     ["总库存", s.totalStock || 0],
     ["数据源", "Wildberries"]
   ];
@@ -451,11 +484,12 @@ function renderTable() {
       <th>预期利润</th>
       <th class="competitor-cell">竞品对比</th>
       <th>产品策略</th>
+      <th class="actions-cell">操作</th>
     </tr>
   `;
 
   const rows = sortedProducts().map(item => `
-    <tr data-wb-row="${escapeHtml(item.nm_id)}" class="${String(item.nm_id) === String(state.selectedNmId) ? "selected-row" : ""}">
+    <tr data-wb-row="${escapeHtml(item.nm_id)}" class="${[String(item.nm_id) === String(state.selectedNmId) ? "selected-row" : "", item.hidden ? "hidden-product-row" : ""].filter(Boolean).join(" ")}">
       <td class="product-cell">
         <strong>${escapeHtml(item.vendor_code || item.title || item.nm_id)}</strong>
         <span>${escapeHtml(item.nm_id)}</span>
@@ -482,10 +516,21 @@ function renderTable() {
       <td class="profit-cell">${escapeHtml(expectedProfit(item))}</td>
       <td class="competitor-cell">${renderText(item, "competitor_compare")}</td>
       <td>${renderText(item, "strategy")}</td>
+      <td class="actions-cell"><button class="hide-product-btn ${item.hidden ? "restore" : ""}" type="button" data-wb-hide-id="${escapeHtml(item.nm_id)}" data-hidden-next="${item.hidden ? "0" : "1"}">${item.hidden ? "恢复" : "隐藏"}</button></td>
     </tr>
   `);
 
-  $("productBody").innerHTML = rows.join("") || `<tr><td colspan="18">暂无 WB 商品数据。WB API 可能仍在限流，稍后点击“同步WB”。</td></tr>`;
+  $("productBody").innerHTML = rows.join("") || `<tr><td colspan="19">暂无 WB 商品数据。WB API 可能仍在限流，稍后点击“同步WB”。</td></tr>`;
+}
+
+async function setProductHidden(nmId, hidden) {
+  const res = await fetch(`${API_BASE}/api/wb/products/${encodeURIComponent(nmId)}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ hidden }) });
+  const payload = await res.json();
+  if (!res.ok || !payload.ok) throw new Error(payload.error || "商品隐藏状态保存失败");
+  if (hidden && !state.showHidden) state.products = state.products.filter(item => String(item.nm_id) !== String(nmId));
+  else { const item = getProduct(nmId); if (item) Object.assign(item, payload.data || {}, { hidden: Boolean(hidden) }); }
+  render();
+  showToast(hidden ? "商品已隐藏" : "商品已恢复");
 }
 
 function renderRevenueTrend() {
@@ -1297,21 +1342,28 @@ function handleEdit(event) {
 }
 
 function renderTrend(rows, nmId) {
-  $("trendTitle").textContent = `${nmId} - WB \u8fd1 30 \u5929\u9500\u91cf\u52a8\u6001`;
+  const range = trendDateRange();
+  $("trendTitle").textContent = `${nmId} - WB ${range.from} 至 ${range.to} 销量动态`;
 
   if (!rows.length) {
     $("trendChart").innerHTML = `<div class="trend-empty">\u6682\u65e0 WB \u9500\u91cf\u52a8\u6001\u6570\u636e</div>`;
     return;
   }
 
-  const normalizedRows = rows.map(item => ({
+  const dailyRows = rows.map(item => ({
     metric_date: item.metric_date,
     sales_units: Number(item.sales_units || 0)
   }));
-  const currentRows = normalizedRows.slice(-30);
-  const previousRows = normalizedRows.slice(-60, -30);
+  const mode = dailyRows.length <= 31 ? "day" : dailyRows.length <= 180 ? "week" : "month";
+  const grouped = new Map();
+  for (const item of dailyRows) {
+    const raw = String(item.metric_date || "").slice(0, 10); let key = raw;
+    if (mode === "week") { const d = new Date(`${raw}T00:00:00Z`); const day = d.getUTCDay() || 7; d.setUTCDate(d.getUTCDate() - day + 1); key = d.toISOString().slice(0, 10); }
+    else if (mode === "month") key = raw.slice(0, 7);
+    grouped.set(key, (grouped.get(key) || 0) + Number(item.sales_units || 0));
+  }
+  const currentRows = Array.from(grouped, ([metric_date, sales_units]) => ({ metric_date, sales_units }));
   const currentTotal = currentRows.reduce((sum, item) => sum + Number(item.sales_units || 0), 0);
-  const previousTotal = previousRows.reduce((sum, item) => sum + Number(item.sales_units || 0), 0);
 
   const width = 760;
   const height = 250;
@@ -1342,8 +1394,8 @@ function renderTrend(rows, nmId) {
       `).join("")}
     </svg>
     <div class="trend-summary">
-      <span>\u8fd1 30 \u5929\u8ba2\u5355\u6570\uff1a${currentTotal}</span>
-      <span>\u4e0a\u4e2a 30 \u5929\u8ba2\u5355\u6570\uff1a${previousTotal}</span>
+      <span>所选区间订单数：${currentTotal}</span>
+      <span>展示粒度：${mode === "day" ? "按日" : mode === "week" ? "按周" : "按月"}</span>
     </div>
   `;
 }
@@ -1359,10 +1411,12 @@ async function loadMetrics(nmId) {
 
   const product = getProduct(nmId);
   const label = product ? (product.vendor_code || product.title || nmId) : nmId;
-  $("trendTitle").textContent = label + " - WB 近 30 天销量动态";
+  const range = trendDateRange();
+  $("trendTitle").textContent = label + ` - WB ${range.from} 至 ${range.to} 销量动态`;
   $("trendChart").innerHTML = '<div class="trend-empty">正在加载动态数据...</div>';
 
-  const res = await fetch(`${API_BASE}/api/wb/metrics/${encodeURIComponent(nmId)}?days=60`);
+  const params = new URLSearchParams({ date_from: range.from, date_to: range.to });
+  const res = await fetch(`${API_BASE}/api/wb/metrics/${encodeURIComponent(nmId)}?${params}`);
   const payload = await res.json();
   if (!res.ok || !payload.ok) throw new Error(payload.error || "WB 动态加载失败");
 
@@ -1450,16 +1504,43 @@ $("salesSort").addEventListener("change", event => {
 ensureWbSubnav();
 
 if ($("metricDateInput")) {
-  $("metricDateInput").value = state.metricDate;
+  syncDateControls();
   $("metricDateInput").addEventListener("change", event => {
+    state.trendFollowsSelection = true;
     state.metricDate = formatDateKey(event.target.value) || defaultMetricDate();
+    if (state.metricDateFrom > state.metricDate) state.metricDateFrom = state.metricDate;
     loadDashboard().catch(error => showToast(error.message));
   });
 }
+$("metricDateFromInput")?.addEventListener("change", event => {
+  state.trendFollowsSelection = true;
+  state.metricDateFrom = formatDateKey(event.target.value) || state.metricDate;
+  if (state.metricDateFrom > state.metricDate) state.metricDate = state.metricDateFrom;
+  $("datePreset").value = "custom"; syncDateControls(); loadDashboard().catch(error => showToast(error.message));
+});
+
+if ($("showHiddenInput")) {
+  $("showHiddenInput").checked = state.showHidden;
+  $("showHiddenInput").addEventListener("change", event => {
+    state.showHidden = event.target.checked;
+    localStorage.setItem(showHiddenKey, state.showHidden ? "1" : "0");
+    loadDashboard().catch(error => showToast(error.message));
+  });
+}
+$("datePreset")?.addEventListener("change", event => {
+  if (event.target.value === "custom") return;
+  state.trendFollowsSelection = true;
+  applyDatePreset(event.target.value); loadDashboard().catch(error => showToast(error.message));
+});
 
 document.addEventListener("input", handleEdit);
 
 document.addEventListener("click", event => {
+  const hideButton = event.target.closest("[data-wb-hide-id]");
+  if (hideButton) {
+    setProductHidden(hideButton.dataset.wbHideId, hideButton.dataset.hiddenNext === "1").catch(error => showToast(error.message));
+    return;
+  }
   if (event.target.closest("[data-wb-id][data-wb-field], input, textarea, [contenteditable='true'], button, select, label")) return;
   const row = event.target.closest("[data-wb-row]");
   if (!row) return;

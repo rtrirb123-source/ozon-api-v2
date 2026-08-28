@@ -56,6 +56,24 @@ function sendJson(req, res, statusCode, body, extraHeaders = {}) {
   res.end(JSON.stringify(body));
 }
 
+function sendHtml(res, statusCode, title, message) {
+  const escapeHtml = (value) => String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+  const safeTitle = escapeHtml(title);
+  const safeMessage = escapeHtml(message);
+  res.writeHead(statusCode, {
+    "Content-Type": "text/html; charset=utf-8",
+    "Cache-Control": "no-store",
+    "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'",
+    "X-Content-Type-Options": "nosniff",
+  });
+  res.end(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${safeTitle}</title><style>body{font-family:system-ui,sans-serif;max-width:680px;margin:72px auto;padding:0 24px;color:#1f2937}h1{font-size:26px}p{line-height:1.7}</style></head><body><h1>${safeTitle}</h1><p>${safeMessage}</p></body></html>`);
+}
+
 async function readJson(req) {
   let body = "";
   for await (const chunk of req) body += chunk;
@@ -300,6 +318,22 @@ async function route(req, res) {
   const path = decodeURIComponent(url.pathname);
 
   // DASHBOARD_AUTH_ROUTES_V1
+  if (url.pathname === "/api/1688/callback" && req.method === "GET") {
+    const error = url.searchParams.get("error") || url.searchParams.get("error_description");
+    if (error) {
+      sendHtml(res, 400, "1688 authorization failed", `Platform error: ${error}`);
+      return;
+    }
+    const code = url.searchParams.get("code");
+    sendHtml(
+      res,
+      200,
+      code ? "1688 authorization callback received" : "1688 callback endpoint is ready",
+      code ? "The authorization code was received. Token exchange must be configured before production use." : "The HTTPS callback endpoint is working and ready for platform validation."
+    );
+    return;
+  }
+
   if (url.pathname === "/api/auth/login" && req.method === "POST") {
     const body = await readJson(req);
     const login = dashboardAuth.login(body.username, body.password);
@@ -807,6 +841,8 @@ async function route(req, res) {
       ok: true,
       data: await products.dashboard({
         date: url.searchParams.get("date") || "",
+        dateFrom: url.searchParams.get("date_from") || "",
+        dateTo: url.searchParams.get("date_to") || "",
         showHidden: url.searchParams.get("show_hidden") || url.searchParams.get("showHidden") || ""
       })
     });
@@ -817,7 +853,9 @@ async function route(req, res) {
     sendJson(req, res, 200, {
       ok: true,
       data: await products.storeMetrics({
-        days: url.searchParams.get("days") || 30
+        days: url.searchParams.get("days") || 30,
+        dateFrom: url.searchParams.get("date_from") || "",
+        dateTo: url.searchParams.get("date_to") || ""
       })
     });
     return;
@@ -895,7 +933,12 @@ async function route(req, res) {
     }
 
     if (req.method === "GET" && path === "/api/wb/dashboard") {
-    sendJson(req, res, 200, { ok: true, data: await wb.dashboard({ date: url.searchParams.get("date") || "" }) });
+    sendJson(req, res, 200, { ok: true, data: await wb.dashboard({
+      date: url.searchParams.get("date") || "",
+      dateFrom: url.searchParams.get("date_from") || "",
+      dateTo: url.searchParams.get("date_to") || "",
+      showHidden: url.searchParams.get("show_hidden") || url.searchParams.get("showHidden") || ""
+    }) });
     return;
   }
 
@@ -986,7 +1029,11 @@ async function route(req, res) {
   if (wbMetricsMatch && req.method === "GET") {
     sendJson(req, res, 200, {
       ok: true,
-      data: await wb.listMetrics(wbMetricsMatch[1], { days: url.searchParams.get("days") || 30 })
+      data: await wb.listMetrics(wbMetricsMatch[1], {
+        days: url.searchParams.get("days") || 30,
+        dateFrom: url.searchParams.get("date_from") || "",
+        dateTo: url.searchParams.get("date_to") || ""
+      })
     });
     return;
   }
@@ -1108,7 +1155,9 @@ async function route(req, res) {
     sendJson(req, res, 200, {
       ok: true,
       data: await products.listMetrics(metricsAliasMatch[1], {
-        days: url.searchParams.get("days") || 30
+        days: url.searchParams.get("days") || 30,
+        dateFrom: url.searchParams.get("date_from") || "",
+        dateTo: url.searchParams.get("date_to") || ""
       })
     });
     return;
@@ -1252,7 +1301,7 @@ async function route(req, res) {
     }
 
     if (req.method === "GET" && path === "/api/wb-cross/dashboard") {
-      sendJson(req, res, 200, { ok: true, data: await wbCross.dashboard({ date: url.searchParams.get("date") || "" }) });
+      sendJson(req, res, 200, { ok: true, data: await wbCross.dashboard({ date: url.searchParams.get("date") || "", dateFrom: url.searchParams.get("date_from") || "", dateTo: url.searchParams.get("date_to") || "" }) });
       return;
     }
     if (req.method === "POST" && path === "/api/sync/wb-cross") {
@@ -1369,7 +1418,11 @@ async function route(req, res) {
     if (wbCrossMetricsMatch && req.method === "GET") {
       sendJson(req, res, 200, {
         ok: true,
-        data: await wbCross.listMetrics(wbCrossMetricsMatch[1], { days: url.searchParams.get("days") || 7 })
+        data: await wbCross.listMetrics(wbCrossMetricsMatch[1], {
+          days: url.searchParams.get("days") || 7,
+          dateFrom: url.searchParams.get("date_from") || "",
+          dateTo: url.searchParams.get("date_to") || ""
+        })
       });
       return;
     }
