@@ -22,11 +22,13 @@ test("unified navigation keeps Russia dashboards and adds South Africa on the ri
 test("Takealot page wires the protected dashboard API and required operating sections", () => {
   const html = read("dashboard/takealot.html");
   const js = read("dashboard/takealot.js");
+  const adapter = read("src/takealot.js");
   for (const id of ["stats", "trendChart", "alerts", "regionalStock", "productBody"]) {
     assert.match(html, new RegExp(`id="${id}"`));
   }
   assert.match(js, /dashboardAuthReady/);
   assert.match(js, /\/api\/takealot\/dashboard/);
+  assert.match(adapter, /"User-Agent": API_USER_AGENT/);
   assert.match(js, /佣金VAT/);
   assert.match(js, /履约VAT/);
 });

@@ -2,6 +2,7 @@ const { config } = require("./config");
 
 const CACHE_TTL_MS = 10 * 60 * 1000;
 const VAT_RATE = 0.15;
+const API_USER_AGENT = "Mozilla/5.0 (compatible; AqicrossDashboard/1.0; +https://115.29.234.40/)";
 const cache = { payload: null, fetchedAt: 0, promise: null };
 
 function number(value) {
@@ -219,7 +220,13 @@ async function apiRequest(path, search = {}) {
   for (const [key, value] of Object.entries(search)) {
     for (const item of Array.isArray(value) ? value : [value]) url.searchParams.append(key, item);
   }
-  const response = await fetch(url, { headers: { "X-API-Key": config.takealotApiKey, Accept: "application/json" } });
+  const response = await fetch(url, {
+    headers: {
+      "X-API-Key": config.takealotApiKey,
+      Accept: "application/json",
+      "User-Agent": API_USER_AGENT,
+    },
+  });
   if (!response.ok) {
     const error = new Error(`Takealot API ${path} 请求失败：${response.status}`);
     error.statusCode = response.status === 403 ? 502 : response.status;
