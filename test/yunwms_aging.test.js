@@ -1,0 +1,338 @@
+const test = require("node:test");
+const assert = require("node:assert");
+const fs = require("node:fs");
+const { computeAging, normalizeAsn, createAgingService } = require("../src/yunwms_aging");
+const repro = require("./fixtures/yunwms_aging/computeAging_input_repro_wrong.json");
+const shishengFx = require("./fixtures/yunwms_aging/qcpqg1m0125_shisheng_minimal.json");
+
+const BATCH_KEYS = ["warehouse_key", "warehouse_name", "warehouse_code", "product_sku", "receiving_code", "reference_no", "shelf_date", "shelf_qty", "remaining_qty", "age_days", "sku_on_hand"];
+const asn = (code, t, recs, status = "E", warehouseKey = "w", warehouseCode = "A") => normalizeAsn(warehouseKey, {
+  receiving_code: code, warehouse_code: warehouseCode, receiving_status: status, warehouse_shelf_time: t,
+  items: recs.map(() => ({})), shelf_inventory_records: recs.map(([sku, q]) => ({ product_sku: sku, sku_quantity: q, warehouse_shelf_time: t })),
+});
+const ordinaryAsns = [
+  asn("R1", "2026-02-21 10:00:00", [["S", 50]]),
+  asn("R2", "2026-07-01 10:00:00", [["S", 30]]),
+  asn("RX", "2026-01-01 10:00:00", [["S", 99]], "X"),
+];
+const ordinaryStock = [{ warehouse_key: "w", warehouse_code: "A", product_sku: "S", sellable: 35, reserved: 5, pending: 100 }];
+const transit = asn("RVACS0109-260220-0001", "2026-02-21 23:41:40", [["QCPQG1M0125", 193]], "E", "shisheng", "001");
+
+function withWarehouse(row) { return { ...row, warehouse_key: "shisheng" }; }
+function aged(row) { return [row.receiving_code, row.remaining_qty, row.age_days, row.shelf_date, row.shelf_qty]; }
+
+test("FIFO keeps newest batches, consumes oldest", () => {
+  const r = computeAging({ asOf: "2026-10-22", asns: ordinaryAsns, stock: ordinaryStock });
+  assert.deepStrictEqual(r.batches.map((b) => [b.receiving_code, b.remaining_qty, b.age_days]), [["R1", 10, 243], ["R2", 30, 113]]);
+  assert.deepStrictEqual(r.gaps, []);
+  assert.deepStrictEqual(Object.keys(r.batches[0]), BATCH_KEYS);
+});
+
+test("gaps: stock without batches and stock exceeding batches", () => {
+  const r = computeAging({ asOf: "2026-10-22", asns: [asn("R1", "2026-05-01 00:00:00", [["S", 5]])],
+    stock: [{ warehouse_key: "w", warehouse_code: "A", product_sku: "S", sellable: 8, reserved: 0 }, { warehouse_key: "w", warehouse_code: "A", product_sku: "N", sellable: 1, reserved: 0 }, { warehouse_key: "w", warehouse_code: "A", product_sku: "Z", sellable: 0, reserved: 0 }] });
+  assert.strictEqual(r.batches.length, 1);
+  assert.deepStrictEqual(r.gaps.map((g) => [g.type, g.product_sku, g.qty]), [["stock_exceeds_batches", "S", 3], ["stock_without_batches", "N", 1]]);
+});
+
+test("empty WMS evidence leaves ordinary FIFO and gap types unchanged", () => {
+  const input = { asOf: "2026-10-22", asns: ordinaryAsns, stock: ordinaryStock };
+  const legacy = computeAging(input);
+  const fetchedNothing = computeAging({ ...input, wmsInventory: [], specialOrders: [] });
+  const rowWithoutLots = computeAging({ ...input, wmsInventory: [{ warehouse_key: "w", warehouse_code: "A", product_sku: "S", sellable: "40" }], specialOrders: [] });
+  const consistentShipped = computeAging({ ...input, wmsInventory: [{ warehouse_key: "w", warehouse_code: "A", product_sku: "S", shipped: 40, batch_info: [] }], specialOrders: [] });
+  assert.deepStrictEqual(fetchedNothing, legacy);
+  assert.deepStrictEqual(rowWithoutLots, legacy);
+  assert.deepStrictEqual(consistentShipped.batches, legacy.batches);
+  assert.deepStrictEqual(consistentShipped.gaps, []);
+});
+
+test("ASN-coded batch quantities do not replace ordinary FIFO", () => {
+  const misleading = computeAging({
+    asOf: "2026-11-06", asns: ordinaryAsns, stock: [{ ...ordinaryStock[0], sellable: 35, reserved: 5 }],
+    wmsInventory: [{ warehouse_key: "w", warehouse_code: "A", product_sku: "S", shipped: 40, batch_info: [
+      { receiving_code: "R1", sellable_quantity: 40, ib_quantity: "50", ib_fifo_time: "2026-02-21 10:00:00", stock_age: 258 },
+    ] }],
+    specialOrders: [],
+  });
+  assert.deepStrictEqual(misleading.batches.map((b) => [b.receiving_code, b.remaining_qty, b.age_days, b.shelf_qty]), [["R1", 10, 258, 50], ["R2", 30, 128, 30]]);
+});
+
+test("ASN-only input still reproduces the 258-day false alarm", () => {
+  const r = computeAging({ asOf: repro.asOf, asns: repro.asns, stock: repro.stock, names: repro.names });
+  assert.deepStrictEqual(r.batches.map((b) => [b.receiving_code, b.shelf_date, b.shelf_qty, b.remaining_qty, b.age_days, b.warehouse_name]), [
+    ["RVACS0109-260220-0001", "2026-02-21", 193, 2, 258, "世晟"],
+  ]);
+});
+
+test("WMS return batch replaces the shipped transit ASN", () => {
+  const r = computeAging({
+    asOf: shishengFx.as_of, asns: [transit], stock: [shishengFx.db_stock_row_for_aging_input], names: { shisheng: "世晟" },
+    wmsInventory: [withWarehouse(shishengFx.product_inventory_current)],
+    specialOrders: [withWarehouse(shishengFx.special_order_return)],
+  });
+  assert.deepStrictEqual(r.batches.map(aged), [["RMAACS0109-261104-0002", 2, 0, "2026-11-05", 2]]);
+  assert.equal(r.batches[0].sku_on_hand, 2);
+  assert.equal(r.batches[0].reference_no, "");
+  assert.deepStrictEqual(r.gaps, []);
+  assert.equal(r.batches.reduce((sum, b) => sum + b.remaining_qty, 0), 2);
+});
+
+test("shipped transit plus reshelved special order is enough when batch_info is absent", () => {
+  const inventory = { ...shishengFx.product_inventory_current, batch_info: [] };
+  const r = computeAging({
+    asOf: "2026-11-06", asns: [transit], stock: [shishengFx.db_stock_row_for_aging_input],
+    wmsInventory: [withWarehouse(inventory)], specialOrders: [withWarehouse(shishengFx.special_order_return)],
+  });
+  assert.deepStrictEqual(r.batches.map(aged), [["RMAACS0109-261104-0002", 2, 1, "2026-11-05", 2]]);
+  assert.ok(r.batches.every((b) => b.receiving_code !== "RVACS0109-260220-0001"));
+});
+
+test("fully shipped ASN with no return evidence is unknown, not an old age", () => {
+  const r = computeAging({
+    asOf: "2026-11-06", asns: [transit], stock: [shishengFx.db_stock_row_for_aging_input],
+    wmsInventory: [{ warehouse_key: "shisheng", warehouse_code: "001", product_sku: "QCPQG1M0125", shipped: 193, batch_info: [] }],
+    specialOrders: [],
+  });
+  assert.deepStrictEqual(r.batches, []);
+  assert.deepStrictEqual(r.gaps, [{ type: "stock_unmatched_unknown", warehouse_key: "shisheng", warehouse_code: "001", product_sku: "QCPQG1M0125", qty: 2 }]);
+  assert.equal("age_days" in r.gaps[0], false);
+});
+
+test("mixed original and return lots keep both quantities and ages", () => {
+  const r = computeAging({
+    asOf: "2026-11-06", asns: [transit],
+    stock: [{ warehouse_key: "shisheng", warehouse_code: "001", product_sku: "QCPQG1M0125", sellable: 12, reserved: 0 }],
+    wmsInventory: [{ warehouse_key: "shisheng", warehouse_code: "001", product_sku: "QCPQG1M0125", shipped: 183, batch_info: [
+      { receiving_code: "RVACS0109-260220-0001", sellable_quantity: 10, ib_quantity: "193", ib_fifo_time: "2026-02-21 23:41:40", stock_age: 258, lc_code: "A1" },
+      { receiving_code: "RMAACS0109-261104-0002", sellable_quantity: 2, ib_fifo_time: "2026-11-05 19:30:35", stock_age: 0, lc_code: "B7-4-12" },
+    ] }],
+    specialOrders: [withWarehouse(shishengFx.special_order_return)],
+  });
+  assert.deepStrictEqual(r.batches.map(aged), [
+    ["RVACS0109-260220-0001", 10, 258, "2026-02-21", 10],
+    ["RMAACS0109-261104-0002", 2, 0, "2026-11-05", 2],
+  ]);
+  assert.equal(r.batches.reduce((sum, b) => sum + b.remaining_qty, 0), 12);
+  assert.deepStrictEqual(r.gaps, []);
+});
+
+test("the same return is not counted from both batch_info and the special order", () => {
+  const duplicatedOrder = [withWarehouse(shishengFx.special_order_return), withWarehouse(shishengFx.special_order_return)];
+  const r = computeAging({
+    asOf: "2026-11-06", asns: [transit], stock: [shishengFx.db_stock_row_for_aging_input],
+    wmsInventory: [withWarehouse(shishengFx.product_inventory_current), withWarehouse(shishengFx.product_inventory_current)],
+    specialOrders: duplicatedOrder,
+  });
+  assert.deepStrictEqual(r.batches.map(aged), [["RMAACS0109-261104-0002", 2, 0, "2026-11-05", 2]]);
+});
+
+test("foreign batch shortfall stays unknown and does not borrow the old ASN", () => {
+  const inventory = { ...shishengFx.product_inventory_current, sellable: "5" };
+  const r = computeAging({
+    asOf: "2026-11-06", asns: [transit],
+    stock: [{ ...shishengFx.db_stock_row_for_aging_input, sellable: 4, reserved: 1 }],
+    wmsInventory: [withWarehouse(inventory)], specialOrders: [],
+  });
+  assert.deepStrictEqual(r.batches.map(aged), [["RMAACS0109-261104-0002", 2, 0, "2026-11-05", 2]]);
+  assert.deepStrictEqual(r.gaps, [{ type: "stock_unmatched_unknown", warehouse_key: "shisheng", warehouse_code: "001", product_sku: "QCPQG1M0125", qty: 3 }]);
+});
+
+test("batch rows cap at on-hand and ignore zero sellable historical inbound qty", () => {
+  const r = computeAging({
+    asOf: "2026-11-06", asns: [transit], stock: [shishengFx.db_stock_row_for_aging_input],
+    wmsInventory: [{ warehouse_key: "shisheng", warehouse_code: "001", product_sku: "QCPQG1M0125", shipped: 193, batch_info: [
+      { receiving_code: "RVACS0109-260220-0001", sellable_quantity: 0, ib_quantity: "193", ib_fifo_time: "2026-02-21 23:41:40", stock_age: 258 },
+      { receiving_code: "RMAACS0109-261104-0002", sellable_quantity: 5, ib_quantity: "5", ib_fifo_time: "2026-11-05 19:30:35", stock_age: 0 },
+    ] }],
+    specialOrders: [],
+  });
+  assert.deepStrictEqual(r.batches.map(aged), [["RMAACS0109-261104-0002", 2, 0, "2026-11-05", 5]]);
+  assert.equal(r.batches.reduce((sum, b) => sum + b.remaining_qty, 0), 2);
+  assert.deepStrictEqual(r.gaps, []);
+});
+
+test("stock_age cannot outrun the fifo date, and a missing age is not invented", () => {
+  const staleAge = computeAging({
+    asOf: "2026-11-06", asns: [transit], stock: [shishengFx.db_stock_row_for_aging_input],
+    wmsInventory: [{ warehouse_key: "shisheng", warehouse_code: "001", product_sku: "QCPQG1M0125", batch_info: [
+      { receiving_code: "RMAACS0109-261104-0002", sellable_quantity: 2, ib_fifo_time: "2026-11-05 19:30:35", stock_age: "400" },
+    ] }],
+    specialOrders: [],
+  });
+  assert.equal(staleAge.batches[0].age_days, 1);
+  const noDate = computeAging({
+    asOf: "2026-11-06", asns: [transit], stock: [shishengFx.db_stock_row_for_aging_input],
+    wmsInventory: [{ warehouse_key: "shisheng", warehouse_code: "001", product_sku: "QCPQG1M0125", batch_info: [
+      { receiving_code: "RMAACS0109-261104-0002", sellable_quantity: 2, ib_fifo_time: "0000-00-00 00:00:00", stock_age: "" },
+    ] }],
+    specialOrders: [{ warehouse_key: "shisheng", spo_code: "RMAACS0109-261104-0002", spo_status: "5", spo_complete_time: "", detail: [] }],
+  });
+  assert.deepStrictEqual(noDate.batches, []);
+  assert.equal(noDate.gaps[0].type, "stock_unmatched_unknown");
+  assert.equal(noDate.gaps[0].qty, 2);
+});
+
+test("cancelled, unreceived, and zero-putaway returns do not create lots", () => {
+  const r = computeAging({
+    asOf: "2026-11-06", asns: [transit], stock: [shishengFx.db_stock_row_for_aging_input],
+    wmsInventory: [{ warehouse_key: "shisheng", warehouse_code: "001", product_sku: "QCPQG1M0125", shipped: 193 }],
+    specialOrders: [
+      { warehouse_key: "shisheng", spo_code: "RMA-CANCEL", spo_status: "X", spo_complete_time: "2026-11-05 19:30:36", warehouse_code: "001", detail: [{ product_sku: "QCPQG1M0125", sop_putaway_qty: 2 }] },
+      { warehouse_key: "shisheng", spo_code: "RMA-ZERO", spo_status: "5", spo_complete_time: "2026-11-05 19:30:36", warehouse_code: "001", detail: [{ product_sku: "QCPQG1M0125", sop_putaway_qty: 0, exception_process_instruction_text: "重新上架" }] },
+    ],
+  });
+  assert.deepStrictEqual(r.batches, []);
+  assert.equal(r.gaps[0].type, "stock_unmatched_unknown");
+});
+
+test("location splits sum once and an exact duplicate batch does not double", () => {
+  const batch = { receiving_code: "RMAACS0109-261104-0002", sellable_quantity: 1, ib_fifo_time: "2026-11-05 19:30:35", stock_age: 0 };
+  const r = computeAging({
+    asOf: "2026-11-06", asns: [transit], stock: [shishengFx.db_stock_row_for_aging_input],
+    wmsInventory: [{ warehouse_key: "shisheng", warehouse_code: "001", product_sku: "QCPQG1M0125", batch_info: [
+      { ...batch, lc_code: "B1" }, { ...batch, lc_code: "B2" }, { ...batch, lc_code: "B2" },
+    ] }],
+    specialOrders: [],
+  });
+  assert.equal(r.batches.reduce((sum, b) => sum + b.remaining_qty, 0), 2);
+  assert.ok(r.batches.every((b) => b.age_days === 0 && b.receiving_code === "RMAACS0109-261104-0002"));
+});
+
+test("warehouse code and warehouse key stay isolated", () => {
+  const other = asn("RV-OTHER", "2026-02-21 23:41:40", [["QCPQG1M0125", 2]], "E", "shisheng", "002");
+  const r = computeAging({
+    asOf: "2026-11-06", asns: [transit, other],
+    stock: [
+      shishengFx.db_stock_row_for_aging_input,
+      { warehouse_key: "shisheng", warehouse_code: "002", product_sku: "QCPQG1M0125", sellable: 2, reserved: 0 },
+      { warehouse_key: "linting", warehouse_code: "001", product_sku: "QCPQG1M0125", sellable: 2, reserved: 0 },
+    ],
+    wmsInventory: [withWarehouse(shishengFx.product_inventory_current)],
+    specialOrders: [withWarehouse(shishengFx.special_order_return)],
+  });
+  const byCode = Object.fromEntries(r.batches.map((b) => [`${b.warehouse_key}:${b.warehouse_code}`, [b.receiving_code, b.age_days, b.remaining_qty]]));
+  assert.deepStrictEqual(byCode["shisheng:001"], ["RMAACS0109-261104-0002", 0, 2]);
+  assert.deepStrictEqual(byCode["shisheng:002"], ["RV-OTHER", 258, 2]);
+  assert.equal(byCode["linting:001"], undefined);
+  assert.ok(r.gaps.some((g) => g.warehouse_key === "linting" && g.type === "stock_without_batches" && g.qty === 2));
+});
+
+test("shipped remainder keeps the unsold ASN quantity and the return quantity", () => {
+  const r = computeAging({
+    asOf: "2026-11-06", asns: [transit],
+    stock: [{ warehouse_key: "shisheng", warehouse_code: "001", product_sku: "QCPQG1M0125", sellable: 14, reserved: 0 }],
+    wmsInventory: [{ warehouse_key: "shisheng", warehouse_code: "001", product_sku: "QCPQG1M0125", shipped: 181, batch_info: [] }],
+    specialOrders: [withWarehouse(shishengFx.special_order_return)],
+  });
+  assert.deepStrictEqual(r.batches.map(aged), [
+    ["RVACS0109-260220-0001", 12, 258, "2026-02-21", 193],
+    ["RMAACS0109-261104-0002", 2, 1, "2026-11-05", 2],
+  ]);
+  assert.equal(r.batches.reduce((sum, b) => sum + b.remaining_qty, 0), 14);
+});
+
+test("service: fails closed on bad ASN response, caches per China day", async () => {
+  let calls = 0;
+  const seen = [];
+  const yunwms = { WAREHOUSES: [{ key: "w", name: "仓" }], callService: async (warehouse, service) => {
+    calls += 1; seen.push(service);
+    return { ask: "Success", nextPage: "false", data: [{ receiving_code: "R1", warehouse_code: "A", receiving_status: "E", warehouse_shelf_time: "2026-06-01 00:00:00", items: [{}], shelf_inventory_records: [{ product_sku: "S", sku_quantity: 4 }] }] };
+  } };
+  const now = () => Date.parse("2026-10-22T02:00:00Z");
+  const query = async () => ({ rows: [{ warehouse_key: "w", warehouse_code: "A", product_sku: "S", sellable: 4, reserved: 0, synced_at: "2026-10-22T00:10:00Z" }] });
+  const svc = createAgingService({ yunwms, query, now });
+  const a = await svc.aging(); await svc.aging();
+  assert.strictEqual(calls, 3); assert.strictEqual(a.complete, true); assert.strictEqual(a.batches[0].age_days, 143);
+  assert.deepStrictEqual(seen, ["getAsnList", "getProductInventory", "getSpecialOrdersList"]);
+  assert.equal(a.method, "fifo_estimate"); assert.equal(a.stock_basis, "sellable+reserved"); assert.equal(a.timezone, "Asia/Shanghai");
+  const bad = createAgingService({ yunwms: { WAREHOUSES: [{ key: "w", name: "仓" }], callService: async () => ({ ask: "Failure" }) }, query, now });
+  await assert.rejects(bad.aging(), /入库单查询失败/);
+});
+
+test("service reads the return batch without writing or widening the stock query", async () => {
+  const seen = [];
+  let queries = 0;
+  const lintingShelf = (code, time, qty) => ({ receiving_code: code, reference_no: code, warehouse_code: "A", receiving_status: "E", warehouse_shelf_time: time, items: [{}], shelf_inventory_records: [{ product_sku: "S", sku_quantity: qty, warehouse_shelf_time: time }] });
+  const yunwms = {
+    WAREHOUSES: [{ key: "shisheng", name: "世晟" }, { key: "linting", name: "林挺" }],
+    callService: async (warehouse, service, params) => {
+      seen.push(`${warehouse.key}:${service}:${params.page}`);
+      if (!["getAsnList", "getProductInventory", "getSpecialOrdersList"].includes(service)) throw new Error(`unexpected ${service}`);
+      if (service === "getAsnList" && warehouse.key === "shisheng") return { ask: "Success", nextPage: params.page === 1 ? "true" : "false", data: params.page === 1 ? [] : [shishengFx.asn_transit_old] };
+      if (service === "getAsnList") return { ask: "Success", nextPage: "false", data: [lintingShelf("R1", "2026-02-21 10:00:00", 50), lintingShelf("R2", "2026-07-01 10:00:00", 30)] };
+      if (service === "getProductInventory" && warehouse.key === "shisheng") {
+        return { ask: "Success", nextPage: params.page === 1 ? "true" : "false", data: params.page === 1 ? [] : [shishengFx.product_inventory_current] };
+      }
+      if (service === "getProductInventory") {
+        return { ask: "Success", nextPage: "false", data: [{ product_sku: "S", warehouse_code: "A", shipped: "40", batch_info: [{ receiving_code: "R1", sellable_quantity: 40, ib_fifo_time: "2026-02-21 10:00:00", stock_age: 300 }] }] };
+      }
+      if (warehouse.key === "shisheng") return { ask: "Success", nextPage: "false", data: [shishengFx.special_order_return] };
+      return { ask: "Success", nextPage: "false", data: [] };
+    },
+  };
+  const query = async (sql) => {
+    queries += 1;
+    assert.equal(sql, "SELECT warehouse_key,warehouse_code,product_sku,sellable,reserved,pending,synced_at FROM inventory_yunwms_stock");
+    return { rows: [
+      { ...shishengFx.db_stock_row_for_aging_input, synced_at: "2026-11-06T00:00:00.000Z" },
+      { warehouse_key: "linting", warehouse_code: "A", product_sku: "S", sellable: 35, reserved: 5, pending: 9, synced_at: "2026-11-06T00:00:00.000Z" },
+    ] };
+  };
+  const svc = createAgingService({ yunwms, query, now: () => Date.parse("2026-11-06T00:00:00Z") });
+  const first = await svc.aging();
+  const second = await svc.aging();
+  assert.equal(queries, 2);
+  assert.equal(seen.length, 8);
+  assert.deepStrictEqual(first.batches.filter((b) => b.warehouse_key === "shisheng").map(aged), [["RMAACS0109-261104-0002", 2, 0, "2026-11-05", 2]]);
+  assert.deepStrictEqual(first.batches.filter((b) => b.warehouse_key === "linting").map((b) => [b.receiving_code, b.remaining_qty, b.age_days, b.shelf_qty]), [["R1", 10, 258, 50], ["R2", 30, 128, 30]]);
+  assert.deepStrictEqual(second.batches, first.batches);
+  assert.equal(first.as_of, "2026-11-06");
+});
+
+test("special-order fetch failure still uses inventory batches; inventory failure fails closed", async () => {
+  const baseStock = { rows: [{ ...shishengFx.db_stock_row_for_aging_input, synced_at: "2026-11-06T00:00:00.000Z" }] };
+  const partial = createAgingService({
+    yunwms: { WAREHOUSES: [{ key: "shisheng", name: "世晟" }], callService: async (warehouse, service) => {
+      if (service === "getAsnList") return { ask: "Success", nextPage: "false", data: [shishengFx.asn_transit_old] };
+      if (service === "getProductInventory") return { ask: "Success", nextPage: "false", data: [shishengFx.product_inventory_current] };
+      throw new Error("special down");
+    } },
+    query: async () => baseStock,
+    now: () => Date.parse("2026-11-06T00:00:00Z"),
+  });
+  const agedResult = await partial.aging();
+  assert.equal(agedResult.batches[0].age_days, 0);
+  assert.equal(agedResult.warnings[0].type, "special_orders_unavailable");
+  let inventoryCalls = 0;
+  const failing = createAgingService({
+    yunwms: { WAREHOUSES: [{ key: "shisheng", name: "世晟" }], callService: async (warehouse, service) => {
+      if (service === "getAsnList") return { ask: "Success", nextPage: "false", data: [shishengFx.asn_transit_old] };
+      inventoryCalls += 1;
+      return { ask: "Failure" };
+    } },
+    query: async () => baseStock,
+    now: () => Date.parse("2026-11-06T00:00:00Z"),
+  });
+  await assert.rejects(failing.aging(), /库存批次查询失败/);
+  await assert.rejects(failing.aging(), /库存批次查询失败/);
+  assert.equal(inventoryCalls, 2);
+});
+
+test("inventory result over 100 pages fails closed", async () => {
+  const svc = createAgingService({
+    yunwms: { WAREHOUSES: [{ key: "w", name: "仓" }], callService: async (warehouse, service) => {
+      if (service === "getAsnList") return { ask: "Success", nextPage: "false", data: [{ receiving_code: "R1", warehouse_code: "A", receiving_status: "E", items: [{}], shelf_inventory_records: [{ product_sku: "S", sku_quantity: 1, warehouse_shelf_time: "2026-06-01 00:00:00" }] }] };
+      if (service === "getProductInventory") return { ask: "Success", nextPage: "true", data: [] };
+      throw new Error("specials should not run after an incomplete inventory read");
+    } },
+    query: async () => ({ rows: [] }),
+    now: () => Date.parse("2026-11-06T00:00:00Z"),
+  });
+  await assert.rejects(svc.aging(), /库存批次超过 100 页/);
+});
+
+test("aging module does not gain sync, schema, schedule, or credential behavior", () => {
+  const src = fs.readFileSync(require.resolve("../src/yunwms_aging"), "utf8");
+  assert.equal(/CREATE TABLE|setInterval|setTimeout|syncAll|APP_TOKEN|APP_KEY|process\.env|https\.request/.test(src), false);
+});

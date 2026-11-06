@@ -1,0 +1,111 @@
+{
+  "as_of": "2026-11-06",
+  "timezone": "Asia/Shanghai",
+  "purpose": "Minimal fixtures for reproducing false 258-day aging on a 2-pc return batch. Not a full warehouse dump.",
+  "asn_list_shape_notes": {
+    "source_api": "getAsnList",
+    "receiving_type_enum": {
+      "0": "标准",
+      "1": "订单退货",
+      "2": "指定产品退件",
+      "3": "中转",
+      "4": "采购",
+      "5": "其它"
+    },
+    "note": "世晟 live ASNs observed were all receiving_type=3 (中转) with receiving_code prefix RVACS. Returns were NOT in getAsnList."
+  },
+  "asn_transit_old": {
+    "warehouse_key": "shisheng",
+    "warehouse_name": "世晟",
+    "receiving_code": "RVACS0109-260220-0001",
+    "reference_no": "RVACS0109-260220-0001",
+    "receiving_type": "3",
+    "receiving_status": "E",
+    "warehouse_code": "001",
+    "transit_warehouse_code": "002",
+    "receiving_add_time": "2026-02-20 11:48:47",
+    "warehouse_receiving_time": "2026-02-21 23:40:27",
+    "tracking_number": "REDACTED_TRACKING",
+    "items": [
+      {
+        "product_sku": "QCPQG1M0125",
+        "quantity": "193",
+        "received_quantity": "193",
+        "putaway_quantity": "193"
+      }
+    ],
+    "shelf_inventory_records": [
+      {
+        "product_sku": "QCPQG1M0125",
+        "sku_quantity": 193,
+        "ib_type": 0,
+        "warehouse_shelf_time": "2026-02-21 23:41:40"
+      }
+    ]
+  },
+  "product_inventory_current": {
+    "source_api": "getProductInventory",
+    "warehouse_code": "001",
+    "product_sku": "QCPQG1M0125",
+    "sellable": "2",
+    "reserved": "0",
+    "shipped": "193",
+    "mfifotime": "2026-11-05 19:30:35",
+    "batch_info": [
+      {
+        "receiving_code": "RMAACS0109-261104-0002",
+        "ib_quantity": "2",
+        "ib_type": "0",
+        "ib_status": "1",
+        "ib_fifo_time": "2026-11-05 19:30:35",
+        "lc_code": "B7-4-12",
+        "sellable_quantity": 2,
+        "stock_age": 0
+      }
+    ]
+  },
+  "special_order_return": {
+    "source_api": "getSpecialOrdersList",
+    "spo_code": "RMAACS0109-261104-0002",
+    "spo_type": "1",
+    "spo_status": "5",
+    "spo_add_time": "2026-11-04 16:17:21",
+    "spo_complete_time": "2026-11-05 19:30:36",
+    "warehouse_code": "001",
+    "order_reference_no": "",
+    "detail": [
+      {
+        "product_sku": "QCPQG1M0125",
+        "sop_quantity": "2",
+        "sop_received_qty": "2",
+        "sop_putaway_qty": 2,
+        "exception_process_instruction_text": "重新上架"
+      }
+    ]
+  },
+  "db_stock_row_for_aging_input": {
+    "warehouse_key": "shisheng",
+    "warehouse_code": "001",
+    "product_sku": "QCPQG1M0125",
+    "sellable": 2,
+    "reserved": 0,
+    "pending": 0,
+    "synced_at": "2026-11-06T01:00:00.000Z"
+  },
+  "aging_algo_current_wrong_output": {
+    "product_sku": "QCPQG1M0125",
+    "receiving_code": "RVACS0109-260220-0001",
+    "shelf_date": "2026-02-21",
+    "shelf_qty": 193,
+    "remaining_qty": 2,
+    "age_days": 258,
+    "reason": "fifo_estimate uses getAsnList shelves only; RMA batch absent from ASN list"
+  },
+  "expected_after_fix": {
+    "remaining_qty": 2,
+    "age_days": 0,
+    "receiving_code": "RMAACS0109-261104-0002",
+    "shelf_or_fifo_date": "2026-11-05",
+    "notes": "2 pcs are returns put away 2026-11-05; original transit 193 are fully shipped (shipped=193). Must not alert as 180+/258-day stock."
+  }
+}

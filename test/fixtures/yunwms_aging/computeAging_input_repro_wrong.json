@@ -1,0 +1,39 @@
+{
+  "asOf": "2026-11-06",
+  "names": {
+    "shisheng": "世晟",
+    "linting": "林挺"
+  },
+  "asns": [
+    {
+      "warehouse_key": "shisheng",
+      "receiving_code": "RVACS0109-260220-0001",
+      "reference_no": "RVACS0109-260220-0001",
+      "warehouse_code": "001",
+      "status": "E",
+      "shelf_time": "",
+      "shelf": [
+        {
+          "sku": "QCPQG1M0125",
+          "qty": 193,
+          "time": "2026-02-21 23:41:40"
+        }
+      ],
+      "item_count": 1
+    }
+  ],
+  "stock": [
+    {
+      "warehouse_key": "shisheng",
+      "warehouse_code": "001",
+      "product_sku": "QCPQG1M0125",
+      "sellable": 2,
+      "reserved": 0
+    }
+  ],
+  "missing_from_asn_list_today": {
+    "rma_batch": "RMAACS0109-261104-0002",
+    "qty": 2,
+    "fifo_time": "2026-11-05 19:30:35"
+  }
+}
