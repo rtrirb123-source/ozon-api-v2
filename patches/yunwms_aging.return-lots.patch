@@ -1,7 +1,6 @@
 --- a/src/yunwms_aging.js
 +++ b/src/yunwms_aging.js
-@@ -1,15 +1,23 @@
--// DESENSITIZED handoff copy. Baseline HEAD 49faac8…; UNTRACKED on live server; copied read-only from /opt/ozon-api-v2-current. No credentials expected in this file.
+@@ -1,14 +1,23 @@
  // Read-only inventory-age estimate for the yunwms warehouses.
 -// Batches = shelf records of inbound orders (getAsnList). Current on-shelf stock
 -// (sellable + reserved, from inventory_yunwms_stock) is assigned FIFO: the newest
@@ -28,7 +27,7 @@
  
  function normalizeAsn(warehouseKey, asn) {
    return {
-@@ -22,11 +30,94 @@
+@@ -21,11 +30,94 @@
    };
  }
  
@@ -127,7 +126,7 @@
    for (const a of asns) {
      if (a.status === "X") continue; // cancelled
      if (!a.shelf.length) { if (a.item_count && a.status === "E") gaps.push({ type: "asn_without_shelf_records", warehouse_key: a.warehouse_key, warehouse_code: a.warehouse_code, receiving_code: a.receiving_code }); continue; }
-@@ -38,75 +129,237 @@
+@@ -37,75 +129,237 @@
        perSku.set(r.sku, { qty: (prev ? prev.qty : 0) + r.qty, time: prev && prev.time < time ? prev.time : time });
      }
      for (const [sku, v] of perSku) {

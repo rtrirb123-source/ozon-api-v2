@@ -32,7 +32,7 @@ Once per China day it also reads `getProductInventory` (page size 500) and `getS
 
 ## Tests
 
-`node --test test/yunwms_aging.test.js` — 22 passed, 0 failed (Node 22).
+`node --test test/yunwms_aging.test.js` — 22 passed, 0 failed (Node 22), re-run after the source patch was regenerated. `src/yunwms_aging.js` was not edited; its SHA-256 is still `20ebb386c82813b7c6949a0d1d5bd83a77935ebf2248096c379e0b923a21239b`.
 
 Covered cases include the supplied repro (ASN-only age 258; with the supplied batch, age 0), shipped-ASN plus special order without `batch_info` (age 1), mixed 10 old + 2 return, no double count, unknown shortfall, on-hand cap, `stock_age` 400 capped by the fifo date, cancelled and zero-putaway returns, location splits, warehouse isolation, ordinary FIFO with and without evidence, service cache, SQL text, special-order failure, and inventory fail-closed.
 
@@ -45,15 +45,14 @@ Covered cases include the supplied repro (ASN-only age 258; with the supplied ba
 | `src/yunwms_aging.js` | Fixed estimate. SHA-256 `20ebb386c82813b7c6949a0d1d5bd83a77935ebf2248096c379e0b923a21239b` |
 | `test/yunwms_aging.test.js` | Snapshot tests plus regressions |
 | `test/fixtures/yunwms_aging/*.json` | Supplied fixtures, unchanged. Minimal fixture SHA-256 `eb7a893b3ba44621ce0e4fe3d548ea5ea1aa90e8653d7e2cdca9ebfc35e80b4e` |
-| `patches/yunwms_aging.return-lots.patch` | Unified diff against the handoff snapshot of `src/yunwms_aging.js` |
-| `patches/yunwms_aging.tests.patch` | Unified diff against the handoff snapshot of the test file |
+| `patches/yunwms_aging.return-lots.patch` | Source diff against the raw live file, not the handoff comment copy. SHA-256 `bb13e68ab178c9996fd491d38d3085f6862e75443192703f3eafe3550663ebe7` |
+| `patches/yunwms_aging.tests.patch` | Test diff against the handoff test file only. Not the production apply artifact |
 
-Snapshot baseline hashes, both matching `DESENSITIZE_CHECK.json`:
+The handoff copy of `src/yunwms_aging.js` is SHA-256 `95091c2ddf4a4698e56a811eae79e77e7cdfe4db86bbabb090a26e2dc0421615`. Its first line is a packaging comment, `// DESENSITIZED handoff copy...`, that is not in the live file. Deleting only that line produces SHA-256 `48029c6008dd52ed64ad9f38bd69a760405d811261e02ad793358cf1fff9db24`, the raw live baseline. The fixed `src/yunwms_aging.js` never contained that comment, so its hash stays `20ebb386c82813b7c6949a0d1d5bd83a77935ebf2248096c379e0b923a21239b`. There is no comment-only change to the result.
 
-- `src/yunwms_aging.js` `95091c2ddf4a4698e56a811eae79e77e7cdfe4db86bbabb090a26e2dc0421615`
-- `test/yunwms_aging.test.js` `5dd9668be6e86bcb4617f5fc587d63a77b1808bbcb8ca50402c418eaf80fe0bd`
+The previous source patch was against `95091c2d…`. On the raw baseline it fails hunk 1 of 3; hunks 2 and 3 apply at a one-line offset. `patches/yunwms_aging.return-lots.patch` is regenerated from `48029c60…` to the fixed file. `patch -p1 --dry-run` is clean, the applied result `cmp` matches `src/yunwms_aging.js`, and that result hashes to `20ebb386…`.
 
-Both patches apply with `patch -p1` onto those snapshot bytes and reproduce the files in this branch. `cmp` against this branch was clean.
+The test file in the handoff zip is SHA-256 `5dd9668be6e86bcb4617f5fc587d63a77b1808bbcb8ca50402c418eaf80fe0bd` and also starts with the packaging comment. `patches/yunwms_aging.tests.patch` is unchanged and is not part of the production file replace.
 
 ## Production apply (approval required)
 
@@ -65,10 +64,10 @@ On the host, in the worktree that is actually serving (`/opt/ozon-api-v2-current
 
 ```sh
 sha256sum src/yunwms_aging.js src/yunwms.js
-# Source must be 95091c2ddf4a4698e56a811eae79e77e7cdfe4db86bbabb090a26e2dc0421615
-# before the patch. If it is not, stop. Do not overwrite yunwms.js.
+# Live source must be 48029c6008dd52ed64ad9f38bd69a760405d811261e02ad793358cf1fff9db24
+# before the patch. 95091c2d… is the handoff copy with one extra comment; do not patch that.
+# If the live hash is anything else, stop. Do not overwrite yunwms.js.
 cp -a src/yunwms_aging.js src/yunwms_aging.js.bak-20261106
-cp -a test/yunwms_aging.test.js test/yunwms_aging.test.js.bak-20261106
 patch -p1 --dry-run < yunwms_aging.return-lots.patch
 patch -p1 < yunwms_aging.return-lots.patch
 sha256sum src/yunwms_aging.js
@@ -76,7 +75,7 @@ sha256sum src/yunwms_aging.js
 node --check src/yunwms_aging.js
 ```
 
-The test patch is optional on the server. It needs the two fixture files from `test/fixtures/yunwms_aging/` as well. `node --test test/yunwms_aging.test.js` does not need live credentials.
+Use only `patches/yunwms_aging.return-lots.patch` (SHA-256 `bb13e68ab178c9996fd491d38d3085f6862e75443192703f3eafe3550663ebe7`). Do not apply `patches/yunwms_aging.tests.patch` on the server, and do not merge this PR into the dirty worktree. The tests in this branch do not need live credentials: `node --test test/yunwms_aging.test.js`.
 
 Restart only with the supervisor already used for this worktree, after approval. Do not run `build:watch`, `debug:watch`, migrations, or old deploy scripts.
 
@@ -87,7 +86,7 @@ After restart, a read-only `GET /api/inventory/yunwms/aging` for 世晟 `001` / 
 ```sh
 cp -a src/yunwms_aging.js.bak-20261106 src/yunwms_aging.js
 sha256sum src/yunwms_aging.js
-# Expect 95091c2ddf4a4698e56a811eae79e77e7cdfe4db86bbabb090a26e2dc0421615
+# Expect the raw live baseline 48029c6008dd52ed64ad9f38bd69a760405d811261e02ad793358cf1fff9db24
 ```
 
 Restart the same way. There is no schema change to undo. Do not restore by copying the handoff `yunwms.js` or by resetting the dirty worktree.
